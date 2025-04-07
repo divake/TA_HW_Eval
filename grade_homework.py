@@ -70,9 +70,9 @@ def prepare_reference_images():
         'solution_images': solution_images
     }
 
-def process_submission(submission_path, student_id, reference_images=None):
+def process_submission(submission_path, student_identifier, reference_images=None):
     """Process a single student submission"""
-    print(f"Processing submission for student {student_id}...")
+    print(f"Processing submission for student {student_identifier}...")
     
     try:
         # If reference images weren't provided, create them now
@@ -225,7 +225,7 @@ def process_submission(submission_path, student_id, reference_images=None):
                 if json_start >= 0 and json_end > json_start:
                     json_str = response_text[json_start:json_end]
                     grading_result = json.loads(json_str)
-                    print(f"Successfully processed submission for student {student_id}")
+                    print(f"Successfully processed submission for student {student_identifier}")
                     # Success! Break out of retry loop
                     break
                 else:
@@ -239,7 +239,7 @@ def process_submission(submission_path, student_id, reference_images=None):
                     time.sleep(delay)
                 else:
                     # Other error or final retry failed
-                    print(f"API error for student {student_id}: {str(e)}")
+                    print(f"API error for student {student_identifier}: {str(e)}")
                     grading_result = {
                         "problems": [],
                         "overall_score": 0,
@@ -250,7 +250,7 @@ def process_submission(submission_path, student_id, reference_images=None):
                     break
                 
     except Exception as e:
-        print(f"Processing error for student {student_id}: {str(e)}")
+        print(f"Processing error for student {student_identifier}: {str(e)}")
         grading_result = {
             "problems": [],
             "overall_score": 0,
@@ -259,21 +259,86 @@ def process_submission(submission_path, student_id, reference_images=None):
             "error": True
         }
     
-    # Save the grading result
-    result_path = os.path.join(output_dir, f"{student_id}_grading.json")
+    # Save the grading result with a consistent filename
+    # Use the submission filename as identifier, but ensure it doesn't have problematic characters
+    safe_identifier = os.path.basename(student_identifier)
+    result_path = os.path.join(output_dir, f"{safe_identifier}_grading.json")
     with open(result_path, 'w') as f:
         json.dump(grading_result, f, indent=2)
     
     return grading_result
 
+def get_student_info(submission_filename):
+    """Extract student name and submission date from the text file"""
+    # The submission filename should be in this format:
+    # "Homework 3_studentid_attempt_timestamp_originalname.pdf"
+    
+    # Split by underscore to get parts
+    parts = submission_filename.split('_')
+    if len(parts) < 4:
+        return {"name": "Unknown", "date_submitted": "Unknown", "original_filename": "Unknown"}
+    
+    # Construct the base pattern for finding the corresponding text file
+    base_pattern = f"{parts[0]}_{parts[1]}_{parts[2]}_{parts[3]}"
+    
+    # Search for the matching text file
+    txt_files = []
+    for root, dirs, files in os.walk(student_dir):
+        for file in files:
+            if file.startswith(base_pattern) and file.endswith('.txt'):
+                txt_files.append(os.path.join(root, file))
+    
+    if not txt_files:
+        print(f"No text file found for submission {submission_filename}")
+        return {"name": "Unknown", "date_submitted": "Unknown", "original_filename": "Unknown"}
+    
+    # Use the first matching text file
+    txt_file = txt_files[0]
+    
+    # Read the text file
+    try:
+        with open(txt_file, 'r') as f:
+            lines = f.readlines()
+        
+        # Extract student name and submission date
+        student_name = "Unknown"
+        student_id = "Unknown"
+        date_submitted = "Unknown"
+        original_filename = "Unknown"
+        
+        in_files_section = False
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Name:"):
+                # Format: "Name: John Doe (jdoe)"
+                name_parts = line.split("(")
+                if len(name_parts) > 1:
+                    student_name = name_parts[0].replace("Name:", "").strip()
+                    student_id_part = name_parts[1].replace(")", "").strip()
+                    student_id = student_id_part
+            elif line.startswith("Date Submitted:"):
+                date_submitted = line.replace("Date Submitted:", "").strip()
+            elif line == "Files:":
+                in_files_section = True
+            elif in_files_section and line.startswith("Original filename:"):
+                original_filename = line.replace("Original filename:", "").strip()
+                in_files_section = False  # Stop after getting the first filename
+        
+        return {"name": student_name, "student_id": student_id, "date_submitted": date_submitted, "original_filename": original_filename}
+    
+    except Exception as e:
+        print(f"Error reading text file for submission {submission_filename}: {str(e)}")
+        return {"name": "Unknown", "student_id": "Unknown", "date_submitted": "Unknown", "original_filename": "Unknown"}
+
 def create_blackboard_csv(grading_results):
     """Create a CSV file for Blackboard import"""
     # Create dataframe for Blackboard import
     data = []
-    for student_id, result in grading_results.items():
+    for submission_filename, result in grading_results.items():
         # Skip errored results or add placeholder for them
         if result.get("error", False):
-            print(f"Skipping student {student_id} in CSV due to processing errors")
+            print(f"Skipping submission {submission_filename} in CSV due to processing errors")
             continue
             
         # Calculate percentage
@@ -290,8 +355,14 @@ def create_blackboard_csv(grading_results):
             if problem.get("score", 20) < 20 and "feedback" in problem:
                 feedback += f"Q{problem['problem_number']}: {problem.get('feedback', '')}\n"
         
+        # Get student name and submission date
+        student_info = get_student_info(submission_filename)
+        
         data.append({
-            "Student ID": student_id,
+            "Student Name": student_info["name"],
+            "Student ID": student_info["student_id"],
+            "Submission Date": student_info["date_submitted"],
+            "Submitted File": student_info["original_filename"],
             "Grade": f"{percentage:.2f}",
             "Feedback": feedback.strip()
         })
@@ -312,57 +383,87 @@ def main():
     # Dictionary to store all grading results
     all_results = {}
     
-    # Get a list of student submissions
-    student_files = []
+    # Get a list of student submission text files first
+    txt_files = []
     for root, dirs, files in os.walk(student_dir):
         for file in files:
-            # Check for PDF files or other submission formats
-            if file.lower().endswith(('.pdf', '.jpg', '.jpeg', '.png')):
-                student_files.append(os.path.join(root, file))
+            if file.endswith('.txt') and file.startswith('Homework 3_'):
+                txt_files.append(os.path.join(root, file))
     
-    if not student_files:
-        print("No student submissions found. Check the directory path.")
+    if not txt_files:
+        print("No student submission metadata files found. Check the directory path.")
         return
         
-    print(f"Found {len(student_files)} student submissions")
+    print(f"Found {len(txt_files)} student submissions")
     
     # Prepare reference images once to avoid repetitive processing
     reference_images = prepare_reference_images()
     
-    # Process first few submissions as a test
+    # Process submissions
     test_limit = 2  # Change to None to process all submissions
     processed_count = 0
     
-    for submission_path in student_files:
-        # Extract student ID from filename or path
-        filename = os.path.basename(submission_path)
-        student_id = os.path.splitext(filename)[0]  # Remove extension
-        
-        print(f"Processing submission {processed_count+1}/{min(test_limit or len(student_files), len(student_files))}: {student_id}")
-        
-        # Check if we already processed this student
-        result_path = os.path.join(output_dir, f"{student_id}_grading.json")
-        if os.path.exists(result_path):
-            print(f"Student {student_id} already processed, loading from file")
-            with open(result_path, 'r') as f:
-                all_results[student_id] = json.load(f)
+    for txt_file in txt_files:
+        try:
+            # Extract student information from the text file
+            with open(txt_file, 'r') as f:
+                lines = f.readlines()
+            
+            # Extract student ID and submission filename
+            student_name = "Unknown"
+            student_id = os.path.basename(txt_file).split('_attempt_')[0]  # Extract ID from filename
+            submission_filename = None
+            
+            in_files_section = False
+            full_submission_path = None
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith("Name:"):
+                    # Format: "Name: John Doe (jdoe)"
+                    name_parts = line.strip().split("(")
+                    if len(name_parts) > 1:
+                        student_name = name_parts[0].replace("Name:", "").strip()
+                elif line == "Files:":
+                    in_files_section = True
+                elif in_files_section and line.startswith("Filename:"):
+                    submission_filename = line.replace("Filename:", "").strip()
+                    full_submission_path = os.path.join(os.path.dirname(txt_file), submission_filename)
+                    break  # Stop after getting the first filename
+            
+            if not submission_filename or not os.path.exists(full_submission_path):
+                print(f"No valid submission file found for student {student_id}")
+                continue
+                
+            print(f"Processing submission {processed_count+1}/{min(test_limit or len(txt_files), len(txt_files))}: {student_id} - {student_name}")
+            
+            # Check if we already processed this student
+            result_path = os.path.join(output_dir, f"{submission_filename}_grading.json")
+            if os.path.exists(result_path):
+                print(f"Student {student_id} already processed, loading from file")
+                with open(result_path, 'r') as f:
+                    all_results[submission_filename] = json.load(f)
+                processed_count += 1
+                continue
+            
+            # Add delay between submissions to avoid rate limits
+            if processed_count > 0:
+                delay = random.uniform(15, 30)  # Random delay between 15-30 seconds
+                print(f"Waiting {delay:.2f} seconds before processing next submission...")
+                time.sleep(delay)
+            
+            # Process the submission
+            result = process_submission(full_submission_path, submission_filename, reference_images)
+            all_results[submission_filename] = result
+            
             processed_count += 1
+            if test_limit is not None and processed_count >= test_limit:
+                print(f"Processed {processed_count} submissions for testing. Set test_limit to None to process all.")
+                break
+                
+        except Exception as e:
+            print(f"Error processing text file {txt_file}: {str(e)}")
             continue
-        
-        # Add delay between submissions to avoid rate limits
-        if processed_count > 0:
-            delay = random.uniform(15, 30)  # Random delay between 15-30 seconds
-            print(f"Waiting {delay:.2f} seconds before processing next submission...")
-            time.sleep(delay)
-        
-        # Process the submission
-        result = process_submission(submission_path, student_id, reference_images)
-        all_results[student_id] = result
-        
-        processed_count += 1
-        if test_limit is not None and processed_count >= test_limit:
-            print(f"Processed {processed_count} submissions for testing. Set test_limit to None to process all.")
-            break
     
     # Create CSV for Blackboard
     if all_results:
