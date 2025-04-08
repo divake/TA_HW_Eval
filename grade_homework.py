@@ -56,12 +56,12 @@ def prepare_reference_images():
     print("Preparing reference images (question and solution)...")
     
     # Convert question PDF to images
-    question_images = pdf_to_images(question_path, dpi=100, max_pages=5)
+    question_images = pdf_to_images(question_path, dpi=100)
     question_images = [compress_image(img) for img in question_images]
     print(f"Processed question PDF with {len(question_images)} pages")
     
     # Convert solution PDF to images
-    solution_images = pdf_to_images(solution_path, dpi=100, max_pages=5)
+    solution_images = pdf_to_images(solution_path, dpi=100)
     solution_images = [compress_image(img) for img in solution_images]
     print(f"Processed solution PDF with {len(solution_images)} pages")
     
@@ -84,7 +84,7 @@ def process_submission(submission_path, student_identifier, reference_images=Non
         
         # Convert student submission to images
         if submission_path.lower().endswith('.pdf'):
-            student_images = pdf_to_images(submission_path, dpi=100, max_pages=5)
+            student_images = pdf_to_images(submission_path, dpi=100)
             student_images = [compress_image(img) for img in student_images]
             print(f"Processed student submission with {len(student_images)} pages")
         else:
@@ -208,7 +208,7 @@ def process_submission(submission_path, student_identifier, reference_images=Non
                 print(f"API attempt {attempt+1}/{max_retries}...")
                 # Call Claude API
                 response = anthropic_client.messages.create(
-                    model="claude-3-5-sonnet-20241022",
+                    model="claude-3-7-sonnet-20250219",
                     max_tokens=4000,
                     temperature=0,
                     system="You are a Digital Signal Processing teaching assistant. Grade homework submissions accurately and fairly, focusing only on the technical content. Format your response as JSON.",
@@ -347,13 +347,16 @@ def create_blackboard_csv(grading_results):
         else:
             percentage = 0
             
-        # Format overall feedback by combining feedback from each problem
-        feedback = result.get("overall_feedback", "") + "\n\n"
+        # Format feedback as comma-separated list for questions without full marks
+        feedback_parts = []
         
         # Only include feedback for problems that didn't get full marks
         for problem in result.get("problems", []):
             if problem.get("score", 20) < 20 and "feedback" in problem:
-                feedback += f"Q{problem['problem_number']}: {problem.get('feedback', '')}\n"
+                feedback_parts.append(f"Q{problem['problem_number']}: {problem.get('feedback', '')}")
+        
+        # Join with commas
+        feedback = ", ".join(feedback_parts)
         
         # Get student name and submission date
         student_info = get_student_info(submission_filename)
@@ -364,7 +367,7 @@ def create_blackboard_csv(grading_results):
             "Submission Date": student_info["date_submitted"],
             "Submitted File": student_info["original_filename"],
             "Grade": f"{percentage:.2f}",
-            "Feedback": feedback.strip()
+            "Feedback": feedback
         })
     
     if not data:
@@ -400,7 +403,7 @@ def main():
     reference_images = prepare_reference_images()
     
     # Process submissions
-    test_limit = 2  # Change to None to process all submissions
+    test_limit = None  # Process all submissions
     processed_count = 0
     
     for txt_file in txt_files:
@@ -412,10 +415,10 @@ def main():
             # Extract student ID and submission filename
             student_name = "Unknown"
             student_id = os.path.basename(txt_file).split('_attempt_')[0]  # Extract ID from filename
-            submission_filename = None
+            submission_filenames = []
             
             in_files_section = False
-            full_submission_path = None
+            full_submission_paths = []
             
             for line in lines:
                 line = line.strip()
@@ -429,32 +432,73 @@ def main():
                 elif in_files_section and line.startswith("Filename:"):
                     submission_filename = line.replace("Filename:", "").strip()
                     full_submission_path = os.path.join(os.path.dirname(txt_file), submission_filename)
-                    break  # Stop after getting the first filename
+                    file_ext = submission_filename.lower().split('.')[-1] if '.' in submission_filename else ''
+                    if os.path.exists(full_submission_path) and (file_ext in ['pdf', 'jpg', 'jpeg', 'png']):
+                        submission_filenames.append(submission_filename)
+                        full_submission_paths.append(full_submission_path)
             
-            if not submission_filename or not os.path.exists(full_submission_path):
-                print(f"No valid submission file found for student {student_id}")
+            if not submission_filenames:
+                print(f"No valid submission files found for student {student_id}")
                 continue
                 
             print(f"Processing submission {processed_count+1}/{min(test_limit or len(txt_files), len(txt_files))}: {student_id} - {student_name}")
+            print(f"Found {len(submission_filenames)} PDF files for this student")
             
-            # Check if we already processed this student
-            result_path = os.path.join(output_dir, f"{submission_filename}_grading.json")
-            if os.path.exists(result_path):
-                print(f"Student {student_id} already processed, loading from file")
-                with open(result_path, 'r') as f:
-                    all_results[submission_filename] = json.load(f)
-                processed_count += 1
+            # Process all PDF files for this student
+            all_student_images = []
+            
+            for idx, (submission_filename, full_submission_path) in enumerate(zip(submission_filenames, full_submission_paths)):
+                print(f"Processing file {idx+1}/{len(submission_filenames)}: {submission_filename}")
+                
+                # Check if we already processed this student's submission
+                result_path = os.path.join(output_dir, f"{submission_filename}_grading.json")
+                if os.path.exists(result_path) and idx == 0:  # Only check for first file to avoid duplicate processing
+                    print(f"Student {student_id} already processed, loading from file")
+                    with open(result_path, 'r') as f:
+                        all_results[submission_filenames[0]] = json.load(f)
+                    processed_count += 1
+                    break
+                
+                # Convert student submission to images and add to collection
+                file_ext = full_submission_path.lower().split('.')[-1] if '.' in full_submission_path else ''
+                if file_ext == 'pdf':
+                    student_file_images = pdf_to_images(full_submission_path, dpi=100)
+                    student_file_images = [compress_image(img) for img in student_file_images]
+                    all_student_images.extend(student_file_images)
+                    print(f"Added {len(student_file_images)} pages from PDF file {submission_filename}")
+                elif file_ext in ['jpg', 'jpeg', 'png']:
+                    try:
+                        img = Image.open(full_submission_path)
+                        img = compress_image(img)
+                        all_student_images.append(img)
+                        print(f"Added image file {submission_filename}")
+                    except Exception as e:
+                        print(f"Error loading image file {submission_filename}: {str(e)}")
+            
+            # Skip if we already processed this student (continue the outer loop)
+            if submission_filenames[0] in all_results:
                 continue
-            
+                
             # Add delay between submissions to avoid rate limits
             if processed_count > 0:
                 delay = random.uniform(15, 30)  # Random delay between 15-30 seconds
                 print(f"Waiting {delay:.2f} seconds before processing next submission...")
                 time.sleep(delay)
             
-            # Process the submission
-            result = process_submission(full_submission_path, submission_filename, reference_images)
-            all_results[submission_filename] = result
+            # Create a temporary full submission path for processing
+            if all_student_images:
+                # Process all images from all files as one submission
+                print(f"Processing all {len(all_student_images)} pages from {len(submission_filenames)} files")
+                
+                # Use the first filename as the identifier
+                submission_identifier = submission_filenames[0]
+                
+                # Custom process_submission function that accepts images directly
+                result = process_submission_with_images(all_student_images, submission_identifier, reference_images)
+                all_results[submission_identifier] = result
+            else:
+                print(f"No valid images found in submission files for student {student_id}")
+                continue
             
             processed_count += 1
             if test_limit is not None and processed_count >= test_limit:
@@ -474,6 +518,186 @@ def main():
             print("No CSV file was generated due to processing errors.")
     else:
         print("No results were generated. Please check the inputs and try again.")
+
+def process_submission_with_images(student_images, student_identifier, reference_images=None):
+    """Process a single student submission with pre-loaded images"""
+    print(f"Processing submission for student {student_identifier}...")
+    
+    try:
+        # If reference images weren't provided, create them now
+        if reference_images is None:
+            reference_images = prepare_reference_images()
+            
+        question_images = reference_images['question_images']
+        solution_images = reference_images['solution_images']
+        
+        print(f"Processing student submission with {len(student_images)} pages")
+        
+        # Create the grading prompt
+        grading_prompt = """
+        You are an expert teaching assistant grading a Digital Signal Processing (ECE317) homework assignment.
+        
+        I have provided multiple images in the following order:
+        1. First set: The homework questions
+        2. Second set: The solution to the assignment
+        3. Third set: The student's submission
+        
+        This homework has 5 questions, each worth 20 marks (for a total of 100 marks).
+        
+        Please grade this submission carefully, following these specific guidelines:
+        - Award full marks (20) if the answer is perfect and matches the solution
+        - Award partial marks (15-18) if the answer is partially correct or has minor errors
+        - Award 0 marks if the question is not attempted
+        - Be generous with partial credit (prefer to give 18-15 rather than lower scores)
+        
+        For ONLY the questions that did NOT receive full marks (20), provide a single line of 
+        feedback explaining why marks were deducted. The feedback should be very brief and to the point.
+        
+        Format your response as JSON with the following structure:
+        {
+            "problems": [
+                {
+                    "problem_number": 1,
+                    "score": 20,  // Full marks example, no feedback needed
+                    "max_score": 20
+                },
+                {
+                    "problem_number": 2,
+                    "score": 18,  // Partial marks example
+                    "max_score": 20,
+                    "feedback": "Missed the aliasing explanation in the frequency domain."
+                },
+                // Repeat for all 5 questions
+            ],
+            "overall_score": Z,  // Sum of all 5 question scores
+            "overall_max": 100,
+            "overall_feedback": "Brief summary of the student's overall performance"
+        }
+        
+        Return only the JSON with no additional text. Ensure you grade all 5 questions.
+        """
+        
+        # Prepare message content with images
+        message_content = [{"type": "text", "text": grading_prompt}]
+        
+        # Add question images
+        for i, img in enumerate(question_images):
+            message_content.append({
+                "type": "text",
+                "text": f"QUESTION PAGE {i+1}:"
+            })
+            message_content.append({
+                "type": "image", 
+                "source": {
+                    "type": "base64", 
+                    "media_type": "image/jpeg", 
+                    "data": image_to_base64(img)
+                }
+            })
+            
+        # Add solution images
+        for i, img in enumerate(solution_images):
+            message_content.append({
+                "type": "text",
+                "text": f"SOLUTION PAGE {i+1}:"
+            })
+            message_content.append({
+                "type": "image", 
+                "source": {
+                    "type": "base64", 
+                    "media_type": "image/jpeg", 
+                    "data": image_to_base64(img)
+                }
+            })
+        
+        # Add student images
+        message_content.append({
+            "type": "text",
+            "text": "STUDENT SUBMISSION:"
+        })
+        
+        for i, img in enumerate(student_images):
+            message_content.append({
+                "type": "text",
+                "text": f"STUDENT PAGE {i+1}:"
+            })
+            message_content.append({
+                "type": "image", 
+                "source": {
+                    "type": "base64", 
+                    "media_type": "image/jpeg", 
+                    "data": image_to_base64(img)
+                }
+            })
+        
+        # Add retry logic with exponential backoff
+        max_retries = 5
+        base_delay = 10  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"API attempt {attempt+1}/{max_retries}...")
+                # Call Claude API
+                response = anthropic_client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=4000,
+                    temperature=0,
+                    system="You are a Digital Signal Processing teaching assistant. Grade homework submissions accurately and fairly, focusing only on the technical content. Format your response as JSON.",
+                    messages=[
+                        {"role": "user", "content": message_content}
+                    ]
+                )
+                
+                # Extract JSON from Claude's response
+                response_text = response.content[0].text
+                # Find JSON in the response (in case Claude adds any text before/after)
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    grading_result = json.loads(json_str)
+                    print(f"Successfully processed submission for student {student_identifier}")
+                    # Success! Break out of retry loop
+                    break
+                else:
+                    raise ValueError("No JSON found in the response")
+                    
+            except Exception as e:
+                if "rate_limit_error" in str(e) and attempt < max_retries - 1:
+                    # Rate limit hit, apply exponential backoff
+                    delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
+                    print(f"Rate limit hit. Retrying in {delay:.2f} seconds...")
+                    time.sleep(delay)
+                else:
+                    # Other error or final retry failed
+                    print(f"API error for student {student_identifier}: {str(e)}")
+                    grading_result = {
+                        "problems": [],
+                        "overall_score": 0,
+                        "overall_max": 100,
+                        "overall_feedback": f"API error: {str(e)}",
+                        "error": True
+                    }
+                    break
+                
+    except Exception as e:
+        print(f"Processing error for student {student_identifier}: {str(e)}")
+        grading_result = {
+            "problems": [],
+            "overall_score": 0,
+            "overall_max": 100,
+            "overall_feedback": f"Processing error: {str(e)}",
+            "error": True
+        }
+    
+    # Save the grading result with a consistent filename
+    # Use the submission filename as identifier, but ensure it doesn't have problematic characters
+    safe_identifier = os.path.basename(student_identifier)
+    result_path = os.path.join(output_dir, f"{safe_identifier}_grading.json")
+    with open(result_path, 'w') as f:
+        json.dump(grading_result, f, indent=2)
+    
+    return grading_result
 
 if __name__ == "__main__":
     main() 
