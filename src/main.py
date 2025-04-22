@@ -29,6 +29,71 @@ logging.basicConfig(
 )
 logger = logging.getLogger("lab_grader")
 
+def analyze_lab_questions(lab_id: str) -> Dict[str, Any]:
+    """
+    Analyze the lab questions PDF to determine question count and structure.
+    
+    Args:
+        lab_id: ID of the lab
+        
+    Returns:
+        Dictionary with lab structure information
+    """
+    # For Lab 05, we'll use the known structure
+    if lab_id == "lab_05":
+        # Hard-coded for now, but could be dynamically analyzed in the future
+        return {
+            "name": "Audio Signals",
+            "total_questions": 4,
+            "question_names": [
+                "Signal Analysis",
+                "Filtering Implementation",
+                "Frequency Response",
+                "Audio Quality Assessment"
+            ],
+            "marks_per_question": 25,
+            "total_marks": 100
+        }
+    
+    # For other labs, return a generic structure
+    return {
+        "name": "Generic Lab",
+        "total_questions": 4,  # Default to 4 questions
+        "question_names": ["Question 1", "Question 2", "Question 3", "Question 4"],
+        "marks_per_question": 25,
+        "total_marks": 100
+    }
+
+def get_lab_questions_content(lab_id: str) -> Dict[str, Any]:
+    """
+    Get the lab questions content.
+    
+    Args:
+        lab_id: ID of the lab
+        
+    Returns:
+        Dictionary with the lab questions content
+    """
+    if lab_id == "lab_05":
+        questions_path = os.path.join(config.BASE_DIR, "src/Lab_05_Questions.pdf")
+        
+        if os.path.exists(questions_path):
+            # Process the PDF file
+            content_b64 = document_processor.file_to_base64(questions_path)
+            return {
+                "type": "file_base64",
+                "content": content_b64,
+                "media_type": "application/pdf",
+                "filename": os.path.basename(questions_path)
+            }
+    
+    # If we couldn't find or process the lab questions file
+    logger.warning(f"Could not find lab questions for {lab_id}, using placeholder")
+    return {
+        "type": "text",
+        "content": f"Lab questions for {lab_id} would be loaded here.",
+    }
+
 def process_student_submission(
     student_info: Dict[str, Any],
     lab_id: str,
@@ -120,12 +185,39 @@ def process_student_submission(
             "student_name": student_name
         }
     
+    # Get lab structure
+    lab_structure = analyze_lab_questions(lab_id)
+    
     # Prepare lab instructions
-    # TODO: Implement actual lab instructions loading
-    # For now, we'll use a placeholder
-    lab_instructions = [
-        {"type": "text", "text": "Lab instructions would be loaded here."}
-    ]
+    lab_questions = get_lab_questions_content(lab_id)
+    
+    # Create lab instruction content
+    if lab_questions.get("type") == "file_base64":
+        lab_instructions = [
+            {
+                "type": "text",
+                "text": f"LAB {lab_id.upper()} QUESTIONS:"
+            },
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": lab_questions.get("media_type", "application/pdf"),
+                    "data": lab_questions.get("content", "")
+                }
+            }
+        ]
+    else:
+        lab_instructions = [
+            {
+                "type": "text",
+                "text": f"LAB {lab_id.upper()} QUESTIONS:"
+            },
+            {
+                "type": "text",
+                "text": lab_questions.get("content", "Lab instructions placeholder")
+            }
+        ]
     
     # Prepare solution if needed
     solution = None
@@ -136,78 +228,53 @@ def process_student_submission(
             {"type": "text", "text": "Solution would be loaded here."}
         ]
     
-    # Prepare student content based on the type of processed submission
+    # Prepare student content
     student_content = []
+    student_content.append({
+        "type": "text",
+        "text": f"STUDENT SUBMISSION ({student_name}, {student_id}):"
+    })
     
-    if processed_submission.get("type") == "image_list":
-        # For image-based submissions
-        for i, img in enumerate(processed_submission.get("content", [])):
-            student_content.append({
-                "type": "text",
-                "text": f"STUDENT PAGE {i+1}:"
-            })
-            student_content.append({
-                "type": "image", 
-                "source": {
-                    "type": "base64", 
-                    "media_type": "image/jpeg", 
-                    "data": document_processor.image_to_base64(img)
-                }
-            })
-    elif processed_submission.get("type") == "pdf_base64":
-        # For direct PDF submissions
+    # Process the files based on their type
+    for file_info in processed_submission.get("content", []):
+        file_type = file_info.get("type")
+        filename = file_info.get("filename", "Unknown file")
+        
         student_content.append({
             "type": "text",
-            "text": "STUDENT SUBMISSION (PDF):"
+            "text": f"FILE: {filename}"
         })
-        student_content.append({
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": processed_submission.get("content", "")
-            }
-        })
-    elif processed_submission.get("type") == "mixed":
-        # For mixed content (multiple files)
-        for i, file_content in enumerate(processed_submission.get("content", [])):
-            if file_content.get("type") == "image_list":
-                for j, img in enumerate(file_content.get("content", [])):
-                    student_content.append({
-                        "type": "text",
-                        "text": f"STUDENT FILE {i+1}, PAGE {j+1}:"
-                    })
-                    student_content.append({
-                        "type": "image", 
-                        "source": {
-                            "type": "base64", 
-                            "media_type": "image/jpeg", 
-                            "data": document_processor.image_to_base64(img)
-                        }
-                    })
-            elif file_content.get("type") == "pdf_base64":
-                student_content.append({
-                    "type": "text",
-                    "text": f"STUDENT FILE {i+1} (PDF):"
-                })
-                student_content.append({
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": file_content.get("content", "")
-                    }
-                })
+        
+        if file_type == "file_base64":
+            # For PDF and other document files
+            student_content.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": file_info.get("media_type", "application/pdf"),
+                    "data": file_info.get("content", "")
+                }
+            })
+        elif file_type == "image_base64":
+            # For image files
+            student_content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": file_info.get("media_type", "image/jpeg"),
+                    "data": file_info.get("content", "")
+                }
+            })
     
     # Build the complete message
     message_content = prompt_templates.build_grading_message(
-        lab_id, lab_instructions, student_content, solution)
+        lab_id, lab_instructions, student_content, solution, lab_structure)
     
     # Send to model
     grading_result = model.send_message(message_content)
     
     # Validate the result
-    expected_problem_count = 4  # For lab_05, 4 questions
+    expected_problem_count = lab_structure.get("total_questions", 4)
     validated_result = model.validate_grading_result(grading_result, expected_problem_count)
     
     # Add student info
@@ -227,7 +294,9 @@ def process_lab(
     model_type: str = "anthropic", 
     with_solution: bool = False,
     max_submissions: Optional[int] = None,
-    parallel: bool = False
+    student_ids: Optional[List[str]] = None,
+    parallel: bool = False,
+    prompt_dump: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Process all submissions for a lab.
@@ -237,12 +306,29 @@ def process_lab(
         model_type: Type of model to use
         with_solution: Whether to include the solution in the grading
         max_submissions: Maximum number of submissions to process (for testing)
+        student_ids: List of specific student IDs to process
         parallel: Whether to process submissions in parallel
+        prompt_dump: Whether to dump the prompt template to a file
         
     Returns:
         List of grading results
     """
     logger.info(f"Processing lab {lab_id} with model {model_type}")
+    
+    # Dump the prompt template if requested
+    if prompt_dump:
+        # Get lab structure
+        lab_structure = analyze_lab_questions(lab_id)
+        
+        # Get the appropriate prompt based on whether a solution is provided
+        grading_prompt = prompt_templates.get_lab_grading_prompt(lab_id, with_solution, lab_structure)
+        
+        # Save to file
+        dump_path = os.path.join(config.OUTPUT_DIR, f"{lab_id}_prompt.txt")
+        with open(dump_path, 'w') as f:
+            f.write(grading_prompt)
+        
+        logger.info(f"Dumped prompt template to {dump_path}")
     
     # Get all student submissions
     submissions = student_data.get_student_submissions(lab_id)
@@ -252,6 +338,17 @@ def process_lab(
         return []
         
     logger.info(f"Found {len(submissions)} student submissions")
+    
+    # Filter submissions by student ID if specified
+    if student_ids:
+        logger.info(f"Filtering submissions for specific students: {', '.join(student_ids)}")
+        filtered_submissions = []
+        for submission in submissions:
+            if submission.get("id", "").lower() in [s.lower() for s in student_ids]:
+                filtered_submissions.append(submission)
+        
+        submissions = filtered_submissions
+        logger.info(f"Filtered to {len(submissions)} submissions")
     
     # Limit if needed
     if max_submissions and max_submissions < len(submissions):
@@ -324,8 +421,11 @@ def main():
     parser.add_argument("--solution", action="store_true",
                         help="Include solution in grading prompt")
     parser.add_argument("--max", type=int, help="Maximum submissions to process")
+    parser.add_argument("--students", nargs="+", help="Specific student IDs to process (e.g., jdoe jtsmith)")
     parser.add_argument("--parallel", action="store_true",
                         help="Process submissions in parallel")
+    parser.add_argument("--dump-prompt", action="store_true",
+                        help="Dump the prompt template to a file")
     
     args = parser.parse_args()
     
@@ -335,7 +435,9 @@ def main():
         model_type=args.model,
         with_solution=args.solution,
         max_submissions=args.max,
-        parallel=args.parallel
+        student_ids=args.students,
+        parallel=args.parallel,
+        prompt_dump=args.dump_prompt
     )
     
     # Print summary

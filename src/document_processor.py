@@ -1,6 +1,6 @@
 """
 Functions for processing PDF documents and other file formats.
-Handles conversion to images for AI models that require it.
+Handles direct PDF submission for AI models.
 """
 
 import os
@@ -11,12 +11,6 @@ import time
 import random
 
 from PIL import Image
-try:
-    from pdf2image import convert_from_path
-except ImportError:
-    print("Warning: pdf2image not installed. PDF to image conversion will not work.")
-    print("Install with: pip install pdf2image")
-    print("You may also need to install poppler: https://github.com/oschwartz10612/poppler-windows/")
 
 import config
 
@@ -32,34 +26,6 @@ def is_direct_pdf_supported(model_type: str) -> bool:
     """
     # Currently only Anthropic models support direct PDF input
     return model_type.lower() == 'anthropic'
-
-def pdf_to_images(pdf_path: str, dpi: int = None, max_pages: int = None) -> List[Image.Image]:
-    """
-    Convert PDF to a list of PIL Image objects.
-    
-    Args:
-        pdf_path: Path to the PDF file
-        dpi: DPI for converting PDF to images (higher = better quality but larger)
-        max_pages: Maximum number of pages to convert
-        
-    Returns:
-        List of PIL Image objects
-    """
-    if dpi is None:
-        dpi = config.IMAGE_SETTINGS['dpi']
-        
-    print(f"Converting PDF to images: {pdf_path}")
-    try:
-        pages = convert_from_path(pdf_path, dpi=dpi)
-        
-        if max_pages and len(pages) > max_pages:
-            print(f"PDF has {len(pages)} pages, limiting to first {max_pages} pages")
-            pages = pages[:max_pages]
-            
-        return pages
-    except Exception as e:
-        print(f"Error converting PDF to images: {str(e)}")
-        return []
 
 def compress_image(image: Image.Image, quality: int = None, max_size: Tuple[int, int] = None) -> Image.Image:
     """
@@ -110,23 +76,44 @@ def image_to_base64(image: Image.Image, format: str = None, quality: int = None)
     image.save(buffered, format=format, quality=quality, optimize=True)
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-def pdf_to_base64(pdf_path: str) -> str:
+def file_to_base64(file_path: str) -> str:
     """
-    Convert PDF file directly to base64 string.
+    Convert any file directly to base64 string.
     
     Args:
-        pdf_path: Path to the PDF file
+        file_path: Path to the file
         
     Returns:
-        Base64-encoded PDF string
+        Base64-encoded string
     """
     try:
-        with open(pdf_path, 'rb') as pdf_file:
-            encoded_string = base64.b64encode(pdf_file.read()).decode('utf-8')
+        with open(file_path, 'rb') as file:
+            encoded_string = base64.b64encode(file.read()).decode('utf-8')
         return encoded_string
     except Exception as e:
-        print(f"Error converting PDF to base64: {str(e)}")
+        print(f"Error converting file to base64: {str(e)}")
         return ""
+
+def get_file_media_type(file_ext: str) -> str:
+    """
+    Get the media type for a file extension.
+    
+    Args:
+        file_ext: File extension (e.g., '.pdf', '.jpg')
+        
+    Returns:
+        Media type string
+    """
+    media_types = {
+        '.pdf': 'application/pdf',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    }
+    
+    return media_types.get(file_ext.lower(), 'application/octet-stream')
 
 def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
     """
@@ -138,29 +125,31 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
         
     Returns:
         Dictionary with processed file data:
-        - type: 'pdf_base64', 'image_list', or 'error'
-        - content: base64 string for PDFs or list of PIL Images for images
+        - type: 'file_base64', 'image_base64', or 'error'
+        - content: base64 string content
+        - media_type: MIME type of the file
         - error: Error message if processing failed
     """
     file_ext = os.path.splitext(file_path)[1].lower()
     
     try:
-        # For PDF files
-        if file_ext == '.pdf':
-            # If model supports direct PDF input, use that
+        # For PDF files or other document types
+        if file_ext in ['.pdf', '.doc', '.docx']:
+            # Check if direct PDF/document input is supported
             if is_direct_pdf_supported(model_type):
-                pdf_data = pdf_to_base64(file_path)
+                file_data = file_to_base64(file_path)
+                media_type = get_file_media_type(file_ext)
                 return {
-                    "type": "pdf_base64",
-                    "content": pdf_data
+                    "type": "file_base64",
+                    "content": file_data,
+                    "media_type": media_type
                 }
             else:
-                # Otherwise convert to images
-                images = pdf_to_images(file_path)
-                images = [compress_image(img) for img in images]
+                # For models that don't support direct PDF input
+                # This is just a placeholder for now, as we're focusing on direct PDF support
                 return {
-                    "type": "image_list",
-                    "content": images
+                    "type": "error",
+                    "error": f"Model {model_type} doesn't support direct {file_ext} input"
                 }
                 
         # For image files
@@ -168,9 +157,11 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
             try:
                 img = Image.open(file_path)
                 img = compress_image(img)
+                image_data = image_to_base64(img)
                 return {
-                    "type": "image_list",
-                    "content": [img]
+                    "type": "image_base64",
+                    "content": image_data,
+                    "media_type": get_file_media_type(file_ext)
                 }
             except Exception as e:
                 return {
@@ -178,14 +169,6 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
                     "error": f"Error processing image file: {str(e)}"
                 }
                 
-        # For DOC/DOCX files (future implementation)
-        elif file_ext in ['.doc', '.docx']:
-            # For now, return an error as DOC/DOCX conversion is not implemented
-            return {
-                "type": "error",
-                "error": "DOC/DOCX conversion not yet implemented"
-            }
-            
         else:
             return {
                 "type": "error",
@@ -210,7 +193,6 @@ def prepare_submission_for_model(student_files: List[Dict[str, str]], model_type
         Dictionary with processed files
     """
     all_processed_files = []
-    all_images = []
     has_errors = False
     error_messages = []
     
@@ -223,11 +205,12 @@ def prepare_submission_for_model(student_files: List[Dict[str, str]], model_type
             error_messages.append(f"Error processing {os.path.basename(file_path)}: {processed['error']}")
             continue
             
-        all_processed_files.append(processed)
-        
-        # Collect all images from all files for image-based models
-        if processed["type"] == "image_list":
-            all_images.extend(processed["content"])
+        all_processed_files.append({
+            "type": processed["type"],
+            "content": processed["content"],
+            "media_type": processed["media_type"],
+            "filename": os.path.basename(file_path)
+        })
     
     # If we have errors but managed to process some files, only log the errors
     if has_errors and all_processed_files:
@@ -241,15 +224,8 @@ def prepare_submission_for_model(student_files: List[Dict[str, str]], model_type
             "error": "\n".join(error_messages)
         }
     
-    # For image-based models, combine all images
-    if not is_direct_pdf_supported(model_type):
-        return {
-            "type": "image_list",
-            "content": all_images
-        }
-    
-    # For direct PDF models, return all processed files
+    # Return all processed files
     return {
-        "type": "mixed",
+        "type": "files",
         "content": all_processed_files
     } 
