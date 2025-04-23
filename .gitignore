@@ -5,3 +5,5 @@ lab_05
 Lab_05_Questions.pdf
 __pycache__
 src/grading/
+# Environment variables
+.env

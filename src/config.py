@@ -4,9 +4,17 @@ Contains API keys, file paths, model settings, and grading parameters.
 """
 
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 
-# API Keys (replace with actual keys when deploying)
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "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")
+# Load environment variables from .env file
+# This enhances security by keeping API keys out of the codebase
+# Create a .env file based on .env.example and add your actual API keys there
+env_path = Path(os.path.dirname(os.path.dirname(__file__))) / '.env'
+load_dotenv(dotenv_path=env_path)
+
+# API Keys from environment variables
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # File paths
