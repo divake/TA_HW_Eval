@@ -227,4 +227,95 @@ def get_allowed_file_extensions():
         List of allowed file extensions (e.g., ['.pdf', '.jpg'])
     """
     # Combine document and image extensions from config
-    return config.FILE_TYPES["document_extensions"] + config.FILE_TYPES["image_extensions"] 
+    return config.FILE_TYPES["document_extensions"] + config.FILE_TYPES["image_extensions"]
+
+def analyze_lab_questions_with_ai(pdf_path: str, model_type: str = "anthropic") -> Dict[str, Any]:
+    """
+    Analyze a lab question PDF using AI to automatically determine structure and grading criteria.
+    
+    Args:
+        pdf_path: Path to the PDF file containing lab questions
+        model_type: Type of AI model to use for analysis
+        
+    Returns:
+        Dictionary with lab structure information:
+        - name: Lab name/title
+        - total_questions: Number of questions/sections
+        - question_names: List of question/section names
+        - marks_per_question: Points per question (if evenly distributed)
+        - total_marks: Total available marks
+    """
+    # Check if the specified model supports direct PDF input
+    if not is_direct_pdf_supported(model_type):
+        return {"error": True, "error_message": f"Model {model_type} doesn't support direct PDF analysis"}
+    
+    # Import model class based on model_type
+    if model_type.lower() == "anthropic":
+        from model_interface import AnthropicModel
+        model = AnthropicModel()
+    else:
+        return {"error": True, "error_message": f"Unsupported model type: {model_type}"}
+    
+    # Convert PDF to base64 for AI processing
+    pdf_content = file_to_base64(pdf_path)
+    
+    # Create the analysis prompt
+    system_prompt = """You are a teaching assistant analyzing lab instruction documents. 
+Your task is to extract the structure of the lab questions, including titles, point values, and number of questions.
+Return your analysis as structured JSON only, with no additional explanation or text."""
+    
+    message_content = [
+        {"type": "text", "text": "Please analyze this lab instruction document and extract the following information:\n\n"
+                                 "1. The lab title/name\n"
+                                 "2. The total number of questions or sections to be completed\n"
+                                 "3. The name of each question or section\n"
+                                 "4. The points allocated to each question (if specified)\n"
+                                 "5. The total points for the lab\n\n"
+                                 "Return the analysis as a JSON object with this structure:\n"
+                                 "{\n"
+                                 "  \"name\": \"Lab Title\",\n"
+                                 "  \"total_questions\": 4,\n"
+                                 "  \"question_names\": [\"Question 1 Title\", \"Question 2 Title\", ...],\n"
+                                 "  \"question_points\": [25, 25, ...],\n"
+                                 "  \"total_marks\": 100\n"
+                                 "}\n\n"
+                                 "If points are not explicitly specified, distribute 100 points equally among the questions."
+        },
+        {"type": "document", 
+         "source": {
+             "type": "base64",
+             "media_type": "application/pdf",
+             "data": pdf_content
+         }}
+    ]
+    
+    # Send to AI for analysis
+    try:
+        result = model.send_message(message_content, system_prompt)
+        
+        # Ensure we have the required fields
+        if "name" in result and "total_questions" in result and "question_names" in result:
+            # Calculate marks_per_question if not provided
+            if "question_points" in result:
+                # Use provided point values
+                points = result["question_points"]
+                result["total_marks"] = sum(points)
+            else:
+                # Equal distribution of points
+                if "total_marks" not in result:
+                    result["total_marks"] = 100
+                result["marks_per_question"] = result["total_marks"] // result["total_questions"]
+                result["question_points"] = [result["marks_per_question"]] * result["total_questions"]
+            
+            # Add file path for reference
+            result["pdf_path"] = pdf_path
+            return result
+        else:
+            return {
+                "error": True, 
+                "error_message": "AI analysis did not return expected structure",
+                "ai_response": result
+            }
+            
+    except Exception as e:
+        return {"error": True, "error_message": f"Error during AI analysis: {str(e)}"} 

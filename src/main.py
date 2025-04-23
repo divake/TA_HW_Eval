@@ -39,9 +39,57 @@ def analyze_lab_questions(lab_id: str) -> Dict[str, Any]:
     Returns:
         Dictionary with lab structure information
     """
+    # Check if we have cached analysis
+    cache_dir = os.path.join(config.OUTPUT_DIR, "lab_analysis")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"{lab_id}_analysis.json")
+    
+    # If we have cached analysis, use it
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r') as f:
+                logger.info(f"Using cached lab analysis for {lab_id}")
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Error reading cached lab analysis for {lab_id}: {str(e)}")
+    
     # Use lab structure from config if available
     if lab_id in config.LAB_STRUCTURE:
-        return config.LAB_STRUCTURE[lab_id]
+        lab_structure = config.LAB_STRUCTURE[lab_id]
+        
+        # If pdf_path is specified in the config, try to analyze it with AI
+        if "pdf_path" in lab_structure and os.path.exists(lab_structure["pdf_path"]):
+            logger.info(f"Analyzing lab questions for {lab_id} using AI")
+            
+            # Import the analyzer function
+            from document_processor import analyze_lab_questions_with_ai
+            
+            # Analyze the lab questions PDF
+            ai_analysis = analyze_lab_questions_with_ai(lab_structure["pdf_path"], "anthropic")
+            
+            if not ai_analysis.get("error", False):
+                # Success - cache the result
+                logger.info(f"AI analysis of lab questions for {lab_id} successful")
+                
+                # Preserve existing fields not in AI analysis
+                for key, value in lab_structure.items():
+                    if key not in ai_analysis:
+                        ai_analysis[key] = value
+                
+                # Cache the analysis
+                try:
+                    with open(cache_file, 'w') as f:
+                        json.dump(ai_analysis, f, indent=2)
+                except Exception as e:
+                    logger.warning(f"Error caching lab analysis for {lab_id}: {str(e)}")
+                
+                return ai_analysis
+            else:
+                # AI analysis failed, log error and use config values
+                logger.warning(f"AI analysis of lab questions failed: {ai_analysis.get('error_message', 'Unknown error')}")
+        
+        # If no PDF path or AI analysis failed, use config values
+        return lab_structure
     
     # Fall back to generic structure
     return config.LAB_STRUCTURE["generic"]
@@ -167,7 +215,7 @@ def process_student_submission(
             "student_name": student_name
         }
     
-    # Get lab structure
+    # Get lab structure - will use AI analysis if available
     lab_structure = analyze_lab_questions(lab_id)
     
     # Prepare lab instructions
@@ -263,7 +311,7 @@ def process_student_submission(
                 }
             })
     
-    # Build the complete message
+    # Build the complete message - build_grading_message now handles prompt generation
     message_content = prompt_templates.build_grading_message(
         lab_id, lab_instructions, student_content, solution, lab_structure)
     

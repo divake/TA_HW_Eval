@@ -6,13 +6,13 @@ Contains API keys, file paths, model settings, and grading parameters.
 import os
 
 # API Keys (replace with actual keys when deploying)
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "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")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # File paths
 BASE_DIR = "/ssd_4TB/divake/BB_ECE317"
 STUDENT_DIR = os.path.join(BASE_DIR, "src/lab_05")  # Submissions
-OUTPUT_DIR = os.path.join(BASE_DIR, "graded_results")
+OUTPUT_DIR = os.path.join(BASE_DIR, "src/grading")
 LAB_INSTRUCTION_PATH = os.path.join(BASE_DIR, "lab_instructions")
 SOLUTION_PATH = os.path.join(BASE_DIR, "lab_solutions")
 
