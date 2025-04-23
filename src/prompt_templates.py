@@ -3,21 +3,10 @@ Templates for prompts to be sent to AI models for grading.
 """
 
 from typing import Dict, Any, List, Optional
+import config
 
-# System prompts for different models
-SYSTEM_PROMPTS = {
-    "anthropic": """You are an expert teaching assistant for Digital Signal Processing (ECE 317).
-Your task is to grade student lab reports accurately, fairly, and consistently.
-Focus on technical content, correctness of signal processing concepts, quality of analysis, and interpretation of results.
-Provide specific, constructive feedback highlighting both strengths and areas for improvement.
-Format your response as JSON according to the specified structure.""",
-    
-    "openai": """You are an expert teaching assistant for Digital Signal Processing (ECE 317).
-Grade student lab reports accurately, fairly, and consistently.
-Focus on technical content, correctness of signal processing concepts, quality of analysis, and interpretation of results.
-Provide specific, constructive feedback highlighting both strengths and areas for improvement.
-Format your response as JSON according to the specified structure."""
-}
+# Get system prompts from config
+SYSTEM_PROMPTS = config.SYSTEM_PROMPTS
 
 def get_lab_grading_prompt(lab_id: str, with_solution: bool = True, lab_structure: Optional[Dict[str, Any]] = None) -> str:
     """
@@ -50,18 +39,7 @@ def get_lab05_prompt(with_solution: bool = True, lab_structure: Optional[Dict[st
     """
     # Use default structure if none provided
     if lab_structure is None:
-        lab_structure = {
-            "name": "Audio Signals",
-            "total_questions": 4,
-            "question_names": [
-                "Signal Analysis",
-                "Filtering Implementation",
-                "Frequency Response",
-                "Audio Quality Assessment"
-            ],
-            "marks_per_question": 25,
-            "total_marks": 100
-        }
+        lab_structure = config.LAB_STRUCTURE["lab_05"]
     
     # Format the list of questions for the prompt
     questions_list = ""
@@ -166,13 +144,7 @@ def get_generic_lab_prompt(with_solution: bool = True, lab_structure: Optional[D
     """
     # Use default structure if none provided
     if lab_structure is None:
-        lab_structure = {
-            "name": "Generic Lab",
-            "total_questions": 4,
-            "question_names": ["Section 1", "Section 2", "Section 3", "Section 4"],
-            "marks_per_question": 25,
-            "total_marks": 100
-        }
+        lab_structure = config.LAB_STRUCTURE["generic"]
     
     # Format the list of questions for the prompt
     questions_list = ""
@@ -198,7 +170,6 @@ def get_generic_lab_prompt(with_solution: bool = True, lab_structure: Optional[D
         - Clarity of explanations and plots
         
         For each section, provide specific feedback explaining why marks were deducted.
-        Be constructive and helpful in your feedback.
         
         Format your response as JSON with the following structure:
         {{
@@ -206,21 +177,20 @@ def get_generic_lab_prompt(with_solution: bool = True, lab_structure: Optional[D
                 {{
                     "problem_number": 1,
                     "name": "{lab_structure.get('question_names', ['Section 1'])[0]}",
-                    "score": 20,
+                    "score": 23,
                     "max_score": {lab_structure.get('marks_per_question', 25)},
-                    "feedback": "Specific feedback on this section"
+                    "feedback": "Good work on this section, but missed certain aspects..."
                 }},
-                // Repeat for all sections
+                // Continue for all sections
             ],
-            "overall_score": 85,
+            "overall_score": 90,
             "overall_max": {lab_structure.get('total_marks', 100)},
-            "overall_feedback": "Overall assessment of the lab report"
+            "overall_feedback": "Overall feedback on the lab submission..."
         }}
         
         Return only the JSON with no additional text. Ensure you grade all {lab_structure.get('total_questions', 4)} sections.
         """
     else:
-        # Prompt without solution
         return f"""
         You are an expert teaching assistant grading a Digital Signal Processing (ECE 317) lab report.
         
@@ -237,11 +207,7 @@ def get_generic_lab_prompt(with_solution: bool = True, lab_structure: Optional[D
         - Analysis and interpretation of results
         - Clarity of explanations and plots
         
-        Use your expert knowledge of digital signal processing to evaluate the correctness
-        of concepts, implementations, and analyses presented in the lab report.
-        
         For each section, provide specific feedback explaining why marks were deducted.
-        Be constructive and helpful in your feedback.
         
         Format your response as JSON with the following structure:
         {{
@@ -249,15 +215,15 @@ def get_generic_lab_prompt(with_solution: bool = True, lab_structure: Optional[D
                 {{
                     "problem_number": 1,
                     "name": "{lab_structure.get('question_names', ['Section 1'])[0]}",
-                    "score": 20,
+                    "score": 23,
                     "max_score": {lab_structure.get('marks_per_question', 25)},
-                    "feedback": "Specific feedback on this section"
+                    "feedback": "Good work on this section, but missed certain aspects..."
                 }},
-                // Repeat for all sections
+                // Continue for all sections
             ],
-            "overall_score": 85,
+            "overall_score": 90,
             "overall_max": {lab_structure.get('total_marks', 100)},
-            "overall_feedback": "Overall assessment of the lab report"
+            "overall_feedback": "Overall feedback on the lab submission..."
         }}
         
         Return only the JSON with no additional text. Ensure you grade all {lab_structure.get('total_questions', 4)} sections.
@@ -271,33 +237,50 @@ def build_grading_message(
     lab_structure: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Build the complete message to send to the AI model.
+    Build the message to send to the model with all the content.
     
     Args:
         lab_id: Lab identifier
-        lab_instructions: List of content objects for lab instructions
-        student_submission: List of content objects for student submission
-        solution: List of content objects for solution (optional)
-        lab_structure: Dictionary with lab structure information (optional)
+        lab_instructions: Lab instruction content
+        student_submission: Student submission content
+        solution: Optional solution content
+        lab_structure: Optional lab structure information
         
     Returns:
-        List of message content objects to send to the model
+        List of content dictionaries for the model
     """
-    # Get the appropriate prompt based on whether a solution is provided
-    grading_prompt = get_lab_grading_prompt(lab_id, solution is not None, lab_structure)
-    
-    # Start with the text prompt
-    message_content = [{"type": "text", "text": grading_prompt}]
+    # Initialize message content list
+    message_content = []
     
     # Add lab instructions
     message_content.extend(lab_instructions)
     
     # Add solution if provided
     if solution:
-        message_content.append({"type": "text", "text": "SOLUTION/GRADING RUBRIC:"})
         message_content.extend(solution)
     
     # Add student submission
     message_content.extend(student_submission)
+    
+    # Add grading instructions
+    message_content.append({
+        "type": "text",
+        "text": "GRADING INSTRUCTIONS:"
+    })
+    
+    # Get lab structure if not provided
+    if not lab_structure:
+        if lab_id in config.LAB_STRUCTURE:
+            lab_structure = config.LAB_STRUCTURE[lab_id]
+        else:
+            lab_structure = config.LAB_STRUCTURE["generic"]
+    
+    # Format grading prompt text
+    prompt_text = get_lab_grading_prompt(lab_id, solution is not None, lab_structure)
+    
+    message_content.append({
+        "type": "text",
+        "text": prompt_text
+    })
     
     return message_content 

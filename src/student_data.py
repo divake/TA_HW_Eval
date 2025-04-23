@@ -10,6 +10,7 @@ import re
 from typing import Dict, List, Any, Optional, Tuple
 
 import config
+import document_processor
 
 def get_student_submissions(lab_id: str) -> List[Dict[str, Any]]:
     """
@@ -24,13 +25,12 @@ def get_student_submissions(lab_id: str) -> List[Dict[str, Any]]:
     student_dir = config.STUDENT_DIR
     submissions = []
     
-    # Get a list of all TXT metadata files for this lab
-    txt_pattern = re.compile(f"{lab_id.replace('_', ' ').title()}_.+_attempt_.+\\.txt$")
+    # Get a list of all TXT files in the student directory
     txt_files = []
     
     for root, _, files in os.walk(student_dir):
         for file in files:
-            if txt_pattern.match(file):
+            if file.endswith('.txt'):
                 txt_files.append(os.path.join(root, file))
     
     if not txt_files:
@@ -93,9 +93,11 @@ def extract_student_info(txt_file: str) -> Dict[str, Any]:
                 submission_filename = line.replace("Filename:", "").strip()
                 full_path = os.path.join(os.path.dirname(txt_file), submission_filename)
                 
-                # Only include PDF, DOC, DOCX, and image files
+                # Only include supported file types
                 file_ext = submission_filename.lower().split('.')[-1] if '.' in submission_filename else ''
-                if os.path.exists(full_path) and file_ext in ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png']:
+                allowed_extensions = document_processor.get_allowed_file_extensions()
+                
+                if os.path.exists(full_path) and f'.{file_ext}' in allowed_extensions:
                     submission_files.append({
                         "filename": submission_filename,
                         "path": full_path,

@@ -18,12 +18,12 @@ import document_processor
 import prompt_templates
 from model_interface import AnthropicModel
 
-# Set up logging
+# Set up logging using config
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=getattr(logging, config.LOGGING["level"]),
+    format=config.LOGGING["format"],
     handlers=[
-        logging.FileHandler(os.path.join(config.OUTPUT_DIR, "grading.log")),
+        logging.FileHandler(config.LOGGING["log_file"]),
         logging.StreamHandler()
     ]
 )
@@ -39,30 +39,12 @@ def analyze_lab_questions(lab_id: str) -> Dict[str, Any]:
     Returns:
         Dictionary with lab structure information
     """
-    # For Lab 05, we'll use the known structure
-    if lab_id == "lab_05":
-        # Hard-coded for now, but could be dynamically analyzed in the future
-        return {
-            "name": "Audio Signals",
-            "total_questions": 4,
-            "question_names": [
-                "Signal Analysis",
-                "Filtering Implementation",
-                "Frequency Response",
-                "Audio Quality Assessment"
-            ],
-            "marks_per_question": 25,
-            "total_marks": 100
-        }
+    # Use lab structure from config if available
+    if lab_id in config.LAB_STRUCTURE:
+        return config.LAB_STRUCTURE[lab_id]
     
-    # For other labs, return a generic structure
-    return {
-        "name": "Generic Lab",
-        "total_questions": 4,  # Default to 4 questions
-        "question_names": ["Question 1", "Question 2", "Question 3", "Question 4"],
-        "marks_per_question": 25,
-        "total_marks": 100
-    }
+    # Fall back to generic structure
+    return config.LAB_STRUCTURE["generic"]
 
 def get_lab_questions_content(lab_id: str) -> Dict[str, Any]:
     """
@@ -74,10 +56,10 @@ def get_lab_questions_content(lab_id: str) -> Dict[str, Any]:
     Returns:
         Dictionary with the lab questions content
     """
-    if lab_id == "lab_05":
-        questions_path = os.path.join(config.BASE_DIR, "src/Lab_05_Questions.pdf")
+    if lab_id in config.LAB_STRUCTURE:
+        questions_path = config.LAB_STRUCTURE[lab_id].get("pdf_path")
         
-        if os.path.exists(questions_path):
+        if questions_path and os.path.exists(questions_path):
             # Process the PDF file
             content_b64 = document_processor.file_to_base64(questions_path)
             return {
@@ -222,11 +204,26 @@ def process_student_submission(
     # Prepare solution if needed
     solution = None
     if with_solution:
-        # TODO: Implement actual solution loading
-        # For now, we'll use a placeholder
-        solution = [
-            {"type": "text", "text": "Solution would be loaded here."}
-        ]
+        # Load solution from configuration path if available
+        solution_path = os.path.join(config.SOLUTION_PATH, f"{lab_id}_solution.pdf")
+        if os.path.exists(solution_path):
+            solution_b64 = document_processor.file_to_base64(solution_path)
+            solution = [
+                {"type": "text", "text": "INSTRUCTOR SOLUTION:"},
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": solution_b64
+                    }
+                }
+            ]
+        else:
+            # Fall back to placeholder
+            solution = [
+                {"type": "text", "text": "Solution would be loaded here."}
+            ]
     
     # Prepare student content
     student_content = []
@@ -359,7 +356,9 @@ def process_lab(
     
     if parallel:
         # Process in parallel using ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(4, len(submissions))) as executor:
+        worker_count = min(4, len(submissions))
+        logger.info(f"Processing {len(submissions)} submissions in parallel with {worker_count} workers")
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
             future_to_submission = {
                 executor.submit(process_student_submission, submission, lab_id, model_type, with_solution): submission
                 for submission in submissions
@@ -389,7 +388,9 @@ def process_lab(
             try:
                 # Add delay between submissions to avoid rate limits
                 if i > 0:
-                    delay = random.uniform(10, 20)  # Random delay between 10-20 seconds
+                    # Use rate limit delay range from config
+                    min_delay, max_delay = config.API_SETTINGS["rate_limit_delay"]
+                    delay = random.uniform(min_delay, max_delay)
                     logger.info(f"Waiting {delay:.2f} seconds before processing next submission...")
                     time.sleep(delay)
                 

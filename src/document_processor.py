@@ -104,16 +104,8 @@ def get_file_media_type(file_ext: str) -> str:
     Returns:
         Media type string
     """
-    media_types = {
-        '.pdf': 'application/pdf',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    }
-    
-    return media_types.get(file_ext.lower(), 'application/octet-stream')
+    # Use media types from config
+    return config.FILE_TYPES["media_types"].get(file_ext.lower(), 'application/octet-stream')
 
 def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
     """
@@ -134,7 +126,7 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
     
     try:
         # For PDF files or other document types
-        if file_ext in ['.pdf', '.doc', '.docx']:
+        if file_ext in config.FILE_TYPES["document_extensions"]:
             # Check if direct PDF/document input is supported
             if is_direct_pdf_supported(model_type):
                 file_data = file_to_base64(file_path)
@@ -153,7 +145,7 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
                 }
                 
         # For image files
-        elif file_ext in ['.jpg', '.jpeg', '.png']:
+        elif file_ext in config.FILE_TYPES["image_extensions"]:
             try:
                 img = Image.open(file_path)
                 img = compress_image(img)
@@ -198,34 +190,41 @@ def prepare_submission_for_model(student_files: List[Dict[str, str]], model_type
     
     for file_info in student_files:
         file_path = file_info["path"]
+        file_name = file_info.get("filename", os.path.basename(file_path))
+        
+        # Process the file
         processed = process_submission_file(file_path, model_type)
         
-        if processed["type"] == "error":
+        # Add filename to processed file for better organization
+        processed["filename"] = file_name
+        
+        # Keep track of errors
+        if processed.get("type") == "error":
             has_errors = True
-            error_messages.append(f"Error processing {os.path.basename(file_path)}: {processed['error']}")
-            continue
-            
-        all_processed_files.append({
-            "type": processed["type"],
-            "content": processed["content"],
-            "media_type": processed["media_type"],
-            "filename": os.path.basename(file_path)
-        })
+            error_messages.append(processed.get("error", "Unknown error"))
+        
+        all_processed_files.append(processed)
     
-    # If we have errors but managed to process some files, only log the errors
-    if has_errors and all_processed_files:
-        for error in error_messages:
-            print(error)
-    
-    # If we have no processed files at all, return the error
-    if not all_processed_files:
+    # Return appropriate result
+    if has_errors and len(error_messages) == len(student_files):
+        # All files had errors
         return {
             "type": "error",
-            "error": "\n".join(error_messages)
+            "error": "; ".join(error_messages)
         }
+    else:
+        # At least some files were processed successfully
+        return {
+            "type": "success",
+            "content": all_processed_files
+        }
+
+def get_allowed_file_extensions():
+    """
+    Get a list of all allowed file extensions.
     
-    # Return all processed files
-    return {
-        "type": "files",
-        "content": all_processed_files
-    } 
+    Returns:
+        List of allowed file extensions (e.g., ['.pdf', '.jpg'])
+    """
+    # Combine document and image extensions from config
+    return config.FILE_TYPES["document_extensions"] + config.FILE_TYPES["image_extensions"] 
