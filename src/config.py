@@ -6,7 +6,7 @@ Contains API keys, file paths, model settings, and grading parameters.
 import os
 
 # API Keys (replace with actual keys when deploying)
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "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")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # File paths
