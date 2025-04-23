@@ -100,13 +100,14 @@ def generate_dynamic_lab_prompt(lab_structure: Dict[str, Any], with_solution: bo
         This lab has {total_questions} questions with the following point allocations (for a total of {total_marks} marks):
         {questions_list}
         
-        Please grade this submission carefully, following these guidelines:
-        - Award full marks for a question if it is complete, correct, and includes thorough analysis
-        - Award approximately 70-90% of the marks for a question if it is partially correct or has minor errors
-        - Award approximately 1-70% of the marks for a question if it has major errors but shows some understanding
-        - Award 0 marks if the question is not attempted or completely incorrect
-        
-        For each question, provide specific feedback explaining why marks were deducted. Be constructive and helpful.
+        GRADING GUIDELINES - READ CAREFULLY:
+        - Be lenient in grading. If a student has attempted the question and got close to the correct answer, give full marks.
+        - Only deduct 1-2 marks if the solution is seriously flawed but shows effort.
+        - Give 0 marks ONLY when a question is completely unattempted.
+        - Provide extremely concise feedback - just a few words identifying what's missing or wrong.
+        - Do NOT provide any feedback for questions that receive full marks.
+        - Do NOT use phrases like "the student has done a good job" or other generic feedback.
+        - Do NOT provide overall feedback on the lab submission.
         
         Format your response as JSON with the following structure:
         {{
@@ -116,13 +117,12 @@ def generate_dynamic_lab_prompt(lab_structure: Dict[str, Any], with_solution: bo
                     "name": "{question_names[0] if question_names else 'Question 1'}",
                     "score": <score>,
                     "max_score": {question_points[0] if question_points else (total_marks // total_questions)},
-                    "feedback": "<specific feedback for this question>"
+                    "feedback": "<only for questions with deducted points; leave empty string for full marks>"
                 }},
                 // Repeat for all questions
             ],
             "overall_score": <total score>,
-            "overall_max": {total_marks},
-            "overall_feedback": "<overall feedback on the lab submission>"
+            "overall_max": {total_marks}
         }}
         
         Return only the JSON with no additional text. Ensure you grade all {total_questions} questions.
@@ -139,14 +139,14 @@ def generate_dynamic_lab_prompt(lab_structure: Dict[str, Any], with_solution: bo
         This lab has {total_questions} questions with the following point allocations (for a total of {total_marks} marks):
         {questions_list}
         
-        Please grade this submission carefully, following these guidelines:
-        - Award full marks for a question if it is complete, correct, and includes thorough analysis
-        - Award approximately 70-90% of the marks for a question if it is partially correct or has minor errors
-        - Award approximately 1-70% of the marks for a question if it has major errors but shows some understanding
-        - Award 0 marks if the question is not attempted or completely incorrect
-        
-        For each question, provide specific feedback explaining why marks were deducted. Be constructive and helpful.
-        Use your expert knowledge of digital signal processing to evaluate the correctness of concepts, calculations, implementations, and analysis.
+        GRADING GUIDELINES - READ CAREFULLY:
+        - Be lenient in grading. If a student has attempted the question and got close to the correct answer, give full marks.
+        - Only deduct 1-2 marks if the solution is seriously flawed but shows effort.
+        - Give 0 marks ONLY when a question is completely unattempted.
+        - Provide extremely concise feedback - just a few words identifying what's missing or wrong.
+        - Do NOT provide any feedback for questions that receive full marks.
+        - Do NOT use phrases like "the student has done a good job" or other generic feedback.
+        - Do NOT provide overall feedback on the lab submission.
         
         Format your response as JSON with the following structure:
         {{
@@ -156,13 +156,12 @@ def generate_dynamic_lab_prompt(lab_structure: Dict[str, Any], with_solution: bo
                     "name": "{question_names[0] if question_names else 'Question 1'}",
                     "score": <score>,
                     "max_score": {question_points[0] if question_points else (total_marks // total_questions)},
-                    "feedback": "<specific feedback for this question>"
+                    "feedback": "<only for questions with deducted points; leave empty string for full marks>"
                 }},
                 // Repeat for all questions
             ],
             "overall_score": <total score>,
-            "overall_max": {total_marks},
-            "overall_feedback": "<overall feedback on the lab submission>"
+            "overall_max": {total_marks}
         }}
         
         Return only the JSON with no additional text. Ensure you grade all {total_questions} questions.

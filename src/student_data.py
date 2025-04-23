@@ -171,14 +171,19 @@ def create_gradebook_csv(lab_id: str, grading_results: List[Dict[str, Any]]) -> 
         # Format feedback
         feedback_parts = []
         
-        # Include feedback for problems that didn't get full marks
+        # Include feedback only for problems that didn't get full marks and have non-empty feedback
         for problem in result.get("problems", []):
             max_score = problem.get("max_score", 25)
-            if problem.get("score", max_score) < max_score and "feedback" in problem:
-                feedback_parts.append(f"Q{problem['problem_number']}: {problem.get('feedback', '')}")
+            feedback = problem.get("feedback", "").strip()
+            
+            # Only include feedback if:
+            # 1. The score is less than max (not full marks)
+            # 2. There is actual feedback text (not empty)
+            if problem.get("score", max_score) < max_score and feedback:
+                feedback_parts.append(f"Q{problem['problem_number']}: {feedback}")
         
-        # Add overall feedback if provided
-        if "overall_feedback" in result:
+        # Add overall feedback if provided and not empty
+        if "overall_feedback" in result and result["overall_feedback"].strip():
             feedback_parts.append(result["overall_feedback"])
             
         # Join with line breaks for better readability in LMS

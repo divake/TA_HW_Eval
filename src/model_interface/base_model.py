@@ -185,6 +185,22 @@ class BaseModel(ABC):
                 # Update overall score
                 overall_score = sum(p.get("score", 0) for p in problems)
                 result["overall_score"] = overall_score
+        
+        # Ensure each problem has a feedback field, even if empty
+        for problem in problems:
+            if "feedback" not in problem:
+                # Get max_score from the problem
+                max_score = problem.get("max_score", 25)
+                
+                # If the score is full marks, set empty feedback
+                if problem.get("score", 0) == max_score:
+                    problem["feedback"] = ""
+                else:
+                    problem["feedback"] = "No specific feedback provided."
+                    
+        # Add an empty overall_feedback for compatibility with existing code
+        if "overall_feedback" not in result:
+            result["overall_feedback"] = ""
                 
         # Ensure overall_score matches sum of individual scores
         sum_scores = sum(p.get("score", 0) for p in problems)
