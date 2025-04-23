@@ -53,41 +53,25 @@ Provide specific, constructive feedback highlighting both strengths and areas fo
 Format your response as JSON according to the specified structure."""
 }
 
-# Grading parameters
+# Grading parameters - removed hardcoded structure and will use lab_analysis files instead
 GRADING = {
     "lab_05": {
         "name": "Audio Signals",
-        "total_marks": 100,
-        "questions": {
-            1: {"marks": 25, "name": "Signal Analysis"},
-            2: {"marks": 25, "name": "Filtering Implementation"},
-            3: {"marks": 25, "name": "Frequency Response"},
-            4: {"marks": 25, "name": "Audio Quality Assessment"}
-        }
+        "total_marks": 100
     }
 }
 
-# Lab structure definitions
+# Lab structure definitions - this will be populated dynamically from lab_analysis files
+# This is just a fallback structure in case the analysis file is not available
 LAB_STRUCTURE = {
     "lab_05": {
         "name": "Audio Signals",
-        "total_questions": 4,
-        "question_names": [
-            "Signal Analysis",
-            "Filtering Implementation",
-            "Frequency Response",
-            "Audio Quality Assessment"
-        ],
-        "marks_per_question": 25,
         "total_marks": 100,
         "pdf_path": os.path.join(BASE_DIR, "src/Lab_05_Questions.pdf")
     },
     # Template for adding new labs
     "generic": {
         "name": "Generic Lab",
-        "total_questions": 4,
-        "question_names": ["Question 1", "Question 2", "Question 3", "Question 4"],
-        "marks_per_question": 25,
         "total_marks": 100
     }
 }
