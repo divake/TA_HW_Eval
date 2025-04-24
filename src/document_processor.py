@@ -11,6 +11,11 @@ import time
 import random
 
 from PIL import Image
+try:
+    import docx
+except ImportError:
+    print("Warning: python-docx is not installed. DOCX text extraction will be unavailable.")
+    docx = None
 
 import config
 
@@ -107,6 +112,42 @@ def get_file_media_type(file_ext: str) -> str:
     # Use media types from config
     return config.FILE_TYPES["media_types"].get(file_ext.lower(), 'application/octet-stream')
 
+def extract_text_from_docx(file_path: str) -> str:
+    """
+    Extract text from a DOCX file.
+    
+    Args:
+        file_path: Path to the DOCX file
+        
+    Returns:
+        Extracted text as a string
+    """
+    if docx is None:
+        return "Cannot extract text from DOCX: python-docx not installed"
+        
+    try:
+        doc = docx.Document(file_path)
+        full_text = []
+        
+        # Extract text from paragraphs
+        for para in doc.paragraphs:
+            if para.text.strip():
+                full_text.append(para.text)
+        
+        # Extract text from tables
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = []
+                for cell in row.cells:
+                    if cell.text.strip():
+                        row_text.append(cell.text)
+                if row_text:
+                    full_text.append(" | ".join(row_text))
+        
+        return "\n\n".join(full_text)
+    except Exception as e:
+        return f"Error extracting text from DOCX: {str(e)}"
+
 def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
     """
     Process a submission file based on its type and the target model.
@@ -125,27 +166,8 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
     file_ext = os.path.splitext(file_path)[1].lower()
     
     try:
-        # For PDF files or other document types
-        if file_ext in config.FILE_TYPES["document_extensions"]:
-            # Check if direct PDF/document input is supported
-            if is_direct_pdf_supported(model_type):
-                file_data = file_to_base64(file_path)
-                media_type = get_file_media_type(file_ext)
-                return {
-                    "type": "file_base64",
-                    "content": file_data,
-                    "media_type": media_type
-                }
-            else:
-                # For models that don't support direct PDF input
-                # This is just a placeholder for now, as we're focusing on direct PDF support
-                return {
-                    "type": "error",
-                    "error": f"Model {model_type} doesn't support direct {file_ext} input"
-                }
-                
-        # For image files
-        elif file_ext in config.FILE_TYPES["image_extensions"]:
+        # For images, compress and convert to base64
+        if file_ext in config.FILE_TYPES["image_extensions"]:
             try:
                 img = Image.open(file_path)
                 img = compress_image(img)
@@ -161,6 +183,61 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
                     "error": f"Error processing image file: {str(e)}"
                 }
                 
+        # For PDF documents
+        elif file_ext == '.pdf':
+            file_data = file_to_base64(file_path)
+            return {
+                "type": "file_base64",
+                "content": file_data,
+                "media_type": "application/pdf"
+            }
+            
+        # For non-PDF documents
+        elif file_ext in config.FILE_TYPES["document_extensions"]:
+            # If using Anthropic, which only accepts PDF documents
+            if model_type.lower() == 'anthropic':
+                # For documents that Anthropic can't process directly,
+                # we'll convert them to text and send as text content
+                try:
+                    # Extract text from DOCX files
+                    if file_ext == '.docx':
+                        content = extract_text_from_docx(file_path)
+                        return {
+                            "type": "text",
+                            "content": f"[Content from {os.path.basename(file_path)}]:\n\n{content}"
+                        }
+                    # Simple text extraction for plain text files
+                    elif file_ext in ['.txt', '.md', '.csv']:
+                        with open(file_path, 'r', errors='ignore') as f:
+                            content = f.read()
+                        return {
+                            "type": "text",
+                            "content": f"[Content from {os.path.basename(file_path)}]:\n\n{content}"
+                        }
+                    # For other document types we'll handle as base64 image
+                    # Anthropic will process it as an image rather than a document
+                    else:
+                        file_data = file_to_base64(file_path)
+                        return {
+                            "type": "image_base64",
+                            "content": file_data,
+                            "media_type": "application/octet-stream",
+                            "filename": os.path.basename(file_path)
+                        }
+                except Exception as e:
+                    return {
+                        "type": "error",
+                        "error": f"Error processing non-PDF document for Anthropic: {str(e)}"
+                    }
+            # For other models that can handle different document types
+            else:
+                file_data = file_to_base64(file_path)
+                media_type = get_file_media_type(file_ext)
+                return {
+                    "type": "file_base64",
+                    "content": file_data,
+                    "media_type": media_type
+                }
         else:
             return {
                 "type": "error",
@@ -185,10 +262,22 @@ def prepare_submission_for_model(student_files: List[Dict[str, str]], model_type
         Dictionary with processed files
     """
     all_processed_files = []
+    pdf_files = []
+    non_pdf_files = []
     has_errors = False
     error_messages = []
     
+    # First sort files by type to prioritize PDFs
     for file_info in student_files:
+        file_path = file_info["path"]
+        file_ext = os.path.splitext(file_path)[1].lower()
+        if file_ext == '.pdf':
+            pdf_files.append(file_info)
+        else:
+            non_pdf_files.append(file_info)
+    
+    # Process PDF files first (since they're most likely to work with Anthropic)
+    for file_info in pdf_files:
         file_path = file_info["path"]
         file_name = file_info.get("filename", os.path.basename(file_path))
         
@@ -205,9 +294,33 @@ def prepare_submission_for_model(student_files: List[Dict[str, str]], model_type
         
         all_processed_files.append(processed)
     
-    # Return appropriate result
+    # Then process non-PDF files
+    for file_info in non_pdf_files:
+        file_path = file_info["path"]
+        file_name = file_info.get("filename", os.path.basename(file_path))
+        
+        # Process the file
+        processed = process_submission_file(file_path, model_type)
+        
+        # Add filename to processed file for better organization
+        processed["filename"] = file_name
+        
+        # Keep track of errors
+        if processed.get("type") == "error":
+            has_errors = True
+            error_messages.append(processed.get("error", "Unknown error"))
+        
+        all_processed_files.append(processed)
+    
+    # If we have no files, return an error
+    if not all_processed_files:
+        return {
+            "type": "error",
+            "error": "No files could be processed"
+        }
+    
+    # If all files had errors, return an error
     if has_errors and len(error_messages) == len(student_files):
-        # All files had errors
         return {
             "type": "error",
             "error": "; ".join(error_messages)

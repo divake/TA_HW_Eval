@@ -94,14 +94,14 @@ def extract_student_info(txt_file: str) -> Dict[str, Any]:
                 full_path = os.path.join(os.path.dirname(txt_file), submission_filename)
                 
                 # Only include supported file types
-                file_ext = submission_filename.lower().split('.')[-1] if '.' in submission_filename else ''
+                file_ext = os.path.splitext(submission_filename.lower())[1] if '.' in submission_filename else ''
                 allowed_extensions = document_processor.get_allowed_file_extensions()
                 
-                if os.path.exists(full_path) and f'.{file_ext}' in allowed_extensions:
+                if os.path.exists(full_path) and file_ext in allowed_extensions:
                     submission_files.append({
                         "filename": submission_filename,
                         "path": full_path,
-                        "extension": file_ext
+                        "extension": file_ext.lstrip('.')
                     })
         
         # Return dictionary with student info and files

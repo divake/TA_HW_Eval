@@ -79,17 +79,24 @@ LAB_STRUCTURE = {
 # File type settings
 FILE_TYPES = {
     # Extensions for documents
-    "document_extensions": ['.pdf', '.doc', '.docx'],
+    "document_extensions": ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt'],
     # Extensions for images
-    "image_extensions": ['.jpg', '.jpeg', '.png'],
+    "image_extensions": ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'],
     # Media types for various file extensions
     "media_types": {
         '.pdf': 'application/pdf',
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
         '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+        '.tiff': 'image/tiff',
+        '.webp': 'image/webp',
         '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.txt': 'text/plain',
+        '.rtf': 'application/rtf',
+        '.odt': 'application/vnd.oasis.opendocument.text'
     }
 }
 
