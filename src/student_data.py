@@ -156,6 +156,15 @@ def create_gradebook_csv(lab_id: str, grading_results: List[Dict[str, Any]]) -> 
     # Create dataframe for gradebook import
     data = []
     
+    # Check if this is a homework assignment
+    is_homework = lab_id.startswith('hw_')
+    
+    # List of non-technical phrases to filter out for homework assignments
+    non_technical_phrases = [
+        "student", "good job", "well done", "demonstrates", "understanding", 
+        "needs to", "should", "careful", "good understanding"
+    ]
+    
     for result in grading_results:
         # Skip errored results
         if result.get("error", False):
@@ -171,23 +180,59 @@ def create_gradebook_csv(lab_id: str, grading_results: List[Dict[str, Any]]) -> 
         # Format feedback
         feedback_parts = []
         
-        # Include feedback only for problems that didn't get full marks and have non-empty feedback
-        for problem in result.get("problems", []):
-            max_score = problem.get("max_score", 25)
-            feedback = problem.get("feedback", "").strip()
-            
-            # Only include feedback if:
-            # 1. The score is less than max (not full marks)
-            # 2. There is actual feedback text (not empty)
-            if problem.get("score", max_score) < max_score and feedback:
-                feedback_parts.append(f"Q{problem['problem_number']}: {feedback}")
+        # Process all problems, including those with full marks
+        all_problems = sorted(result.get("problems", []), key=lambda p: p.get("problem_number", 0))
         
-        # Add overall feedback if provided and not empty
-        if "overall_feedback" in result and result["overall_feedback"].strip():
-            feedback_parts.append(result["overall_feedback"])
+        if is_homework:
+            # Group feedback by question
+            for i, problem in enumerate(all_problems):
+                problem_num = problem.get("problem_number", 0)
+                score = problem.get("score", 0)
+                max_score = problem.get("max_score", 25)
+                feedback = problem.get("feedback", "").strip()
+                justification = problem.get("justification", "").strip()
+                
+                # Include score for all questions
+                feedback_text = f"Q{problem_num}: ({score}/{max_score})"
+                
+                # Add comma for all but the last question
+                if i < len(all_problems) - 1:
+                    feedback_text += ","
+                
+                # Add specific feedback for this question if it exists
+                if score < max_score and feedback:
+                    # For homework assignments, filter out non-technical language
+                    contains_non_technical = any(phrase.lower() in feedback.lower() for phrase in non_technical_phrases)
+                    
+                    if contains_non_technical:
+                        # Convert to more technical format by extracting key technical details
+                        feedback = feedback.replace("The student ", "")
+                        feedback = feedback.replace("student ", "")
+                        feedback = re.sub(r'demonstrates good understanding of .+, but', '', feedback)
+                        feedback = re.sub(r'needs to be more careful with', 'errors in', feedback)
+                        feedback = re.sub(r'could be more rigorous', 'lacks mathematical rigor', feedback)
+                        
+                    feedback_text += f" {feedback}"
+                # If no specific feedback but there's a justification, use that
+                elif justification and not feedback and score < max_score:
+                    feedback_text += f" {justification}"
+                
+                feedback_parts.append(feedback_text)
             
-        # Join with line breaks for better readability in LMS
-        feedback = "\n".join(feedback_parts)
+            # Join with spaces for better readability in LMS
+            feedback = " ".join(feedback_parts)
+        else:
+            # Original behavior for non-homework assignments
+            for problem in all_problems:
+                if problem.get("score", 0) < problem.get("max_score", 25) and problem.get("feedback", "").strip():
+                    feedback_parts.append(f"Q{problem.get('problem_number', 0)}: {problem.get('feedback', '')}")
+            
+            # Add overall feedback if provided and not empty for non-homework assignments
+            if "overall_feedback" in result and result["overall_feedback"].strip():
+                feedback_parts.append(result["overall_feedback"])
+                
+            # Join with line breaks for better readability in LMS
+            feedback = "\n".join(feedback_parts)
         
         data.append({
             "Student Name": result.get("student_name", "Unknown"),

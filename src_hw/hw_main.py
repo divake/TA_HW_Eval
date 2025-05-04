@@ -591,32 +591,39 @@ Your task is to:
 
 The homework has {total_questions} questions and a maximum score of {max_points} points.
 
+FEEDBACK GUIDELINES - FOLLOW STRICTLY:
+- Provide ONLY technical feedback focusing on specific mathematical errors, incorrect equations, missing steps, or incorrect logic
+- Be extremely concise - use bullet points or short phrases when possible
+- Focus exclusively on the technical content (equations, calculations, theoretical concepts)
+- DO NOT use subjective language like "student has done a good job" or "student needs to improve"
+- DO NOT provide generalized feedback like "good understanding of concepts"
+- DO NOT include any non-technical observations
+- Include ONLY the precise technical issue with the specific calculation, equation, or concept
+- Use mathematical notation where appropriate
+
 For each question:
 1. Analyze the student's answer
 2. Compare it to the reference solution
 3. Determine a score
-4. Provide specific feedback ONLY if the student did not receive full marks, explaining what was missing or incorrect
-5. Give a justification for your scoring decision
-
-After grading all questions, calculate the overall score as a percentage and as points out of {max_points}.
+4. Provide specific feedback ONLY if the student did not receive full marks, following the strict technical guidelines above
 
 Format your response as follows:
 
 QUESTION 1
 Score: [X/Y]
-Feedback: [Only if not full marks]
+Feedback: [Only if not full marks - use concise technical language only]
 Justification: [Brief explanation of scoring]
 
 QUESTION 2
 Score: [X/Y]
-Feedback: [Only if not full marks]
+Feedback: [Only if not full marks - use concise technical language only]
 Justification: [Brief explanation of scoring]
 
 ...
 
 OVERALL SCORE: [X%] ([X/{max_points} points)
 
-SUMMARY COMMENTS: [Brief overall assessment of the student's understanding]
+SUMMARY COMMENTS: [Only technical observations about specific patterns of errors]
 """
     
     return prompt
