@@ -8,3 +8,4 @@ src/grading/
 # Environment variables
 .env
 prompt_templates.py.bak
+hw_04/

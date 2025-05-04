@@ -6,6 +6,7 @@ All model-specific implementations should inherit from this class.
 import json
 import time
 import random
+import re
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional, Union, Tuple
 
@@ -70,6 +71,10 @@ class BaseModel(ABC):
                 json_str = response_text[json_start:json_end]
                 return json.loads(json_str)
             else:
+                # First try to parse as a structured text response
+                parsed_result = self.parse_text_grading_response(response_text)
+                if parsed_result:
+                    return parsed_result
                 raise ValueError("No JSON found in the response")
                 
         except Exception as e:
@@ -82,12 +87,163 @@ class BaseModel(ABC):
                 cleaned_text = response_text.replace("```json", "").replace("```", "")
                 return json.loads(cleaned_text)
             except:
+                # Try to parse as a structured text response
+                parsed_result = self.parse_text_grading_response(response_text)
+                if parsed_result:
+                    return parsed_result
+                    
                 # Return error object
                 return {
                     "error": True,
                     "error_message": f"Failed to parse JSON: {str(e)}",
                     "raw_response": response_text[:500]  # First 500 chars only
                 }
+    
+    def parse_text_grading_response(self, text_response: str) -> Dict[str, Any]:
+        """
+        Parse the text response from the model into a structured format.
+        
+        Args:
+            text_response: The raw text response from the model
+            
+        Returns:
+            Dictionary with structured grading results or None if parsing fails
+        """
+        try:
+            lines = text_response.strip().split('\n')
+            result = {
+                "problems": [],
+                "overall_score": 0,
+                "overall_max": 100,  # Default
+                "overall_feedback": ""
+            }
+            
+            current_problem = None
+            total_score = 0
+            total_possible = 0
+            
+            # Process line by line
+            for line in lines:
+                line = line.strip()
+                
+                # Skip introductory text
+                if "grade the student" in line.lower() or not line:
+                    continue
+                    
+                # Check if this is a question line
+                if line.startswith("QUESTION ") or line.startswith("PROBLEM "):
+                    # Save previous problem if exists
+                    if current_problem is not None:
+                        result["problems"].append(current_problem)
+                        
+                    # Extract problem number
+                    parts = line.split()
+                    try:
+                        problem_number = int(parts[1])
+                    except (IndexError, ValueError):
+                        problem_number = len(result["problems"]) + 1
+                        
+                    # Create new problem
+                    current_problem = {
+                        "problem_number": problem_number,
+                        "score": 0,
+                        "max_score": 0,
+                        "feedback": "",
+                        "justification": ""
+                    }
+                        
+                # Check if this is a score line
+                elif line.startswith("Score:") and current_problem is not None:
+                    score_part = line.split("Score:")[1].strip()
+                    if "[" in score_part and "/" in score_part and "]" in score_part:
+                        # Extract score format [X/Y]
+                        score_text = score_part.split("[")[1].split("]")[0]
+                        parts = score_text.split("/")
+                        try:
+                            current_problem["score"] = float(parts[0])
+                            current_problem["max_score"] = float(parts[1])
+                            total_score += current_problem["score"]
+                            total_possible += current_problem["max_score"]
+                        except (IndexError, ValueError):
+                            print(f"Could not parse score: {score_part}")
+                    else:
+                        # Try to handle other score formats
+                        try:
+                            # Look for numbers in the score line
+                            numbers = re.findall(r"[-+]?\d*\.\d+|\d+", score_part)
+                            if len(numbers) >= 2:
+                                current_problem["score"] = float(numbers[0])
+                                current_problem["max_score"] = float(numbers[1])
+                                total_score += current_problem["score"]
+                                total_possible += current_problem["max_score"]
+                            elif len(numbers) == 1:
+                                # Assume out of 25 if only one number
+                                current_problem["score"] = float(numbers[0])
+                                current_problem["max_score"] = 25
+                                total_score += current_problem["score"]
+                                total_possible += 25
+                        except:
+                            print(f"Could not parse alternative score format: {score_part}")
+                            
+                # Check if this is a feedback line
+                elif line.startswith("Feedback:") and current_problem is not None:
+                    current_problem["feedback"] = line.split("Feedback:")[1].strip()
+                    
+                # Check if this is a justification line
+                elif line.startswith("Justification:") and current_problem is not None:
+                    current_problem["justification"] = line.split("Justification:")[1].strip()
+                    
+                # Check if this is the overall score line
+                elif "OVERALL SCORE:" in line:
+                    # Try to extract percentage
+                    if "%" in line:
+                        try:
+                            percent_text = re.search(r"(\d+(\.\d+)?)%", line)
+                            if percent_text:
+                                result["overall_score"] = float(percent_text.group(1))
+                        except:
+                            print(f"Could not parse overall percentage: {line}")
+                            
+                    # Try to extract points
+                    points_match = re.search(r"\((\d+(\.\d+)?)/(\d+(\.\d+)?)\s*points?\)", line)
+                    if points_match:
+                        try:
+                            result["overall_score"] = float(points_match.group(1))
+                            result["overall_max"] = float(points_match.group(3))
+                        except:
+                            print(f"Could not parse overall points: {line}")
+                            
+                    # If percentage and points didn't work, calculate from total
+                    if result["overall_score"] == 0 and total_possible > 0:
+                        result["overall_score"] = (total_score / total_possible) * 100
+                        
+                # Check if this is the summary line
+                elif "SUMMARY COMMENTS:" in line:
+                    result["overall_feedback"] = line.split("SUMMARY COMMENTS:")[1].strip()
+                    
+                # Append to feedback or justification if continuation
+                elif current_problem is not None:
+                    if current_problem["feedback"] and not current_problem["justification"]:
+                        current_problem["feedback"] += " " + line
+                    elif current_problem["justification"]:
+                        current_problem["justification"] += " " + line
+            
+            # Add the last problem if exists
+            if current_problem is not None:
+                result["problems"].append(current_problem)
+            
+            # Calculate overall score if not set
+            if result["overall_score"] == 0 and total_possible > 0:
+                result["overall_score"] = (total_score / total_possible) * 100
+                
+            # Final validation - must have at least one problem
+            if not result["problems"]:
+                return None
+                
+            return result
+        except Exception as e:
+            print(f"Error parsing text response: {str(e)}")
+            return None
     
     def process_with_retry(self, process_func, *args, **kwargs) -> Dict[str, Any]:
         """
