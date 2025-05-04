@@ -63,41 +63,64 @@ class BaseModel(ABC):
             Parsed JSON as a dictionary
         """
         try:
-            # Find JSON in the response (in case the model adds text before/after)
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
+            # First try direct JSON parsing of the whole response
+            try:
+                return json.loads(response_text)
+            except:
+                # If that fails, try to find JSON delimiters
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    try:
+                        return json.loads(json_str)
+                    except:
+                        # Try to fix common JSON issues
+                        # Replace single quotes with double quotes
+                        json_str = json_str.replace("'", "\"")
+                        # Fix common missing quotes around keys
+                        json_str = re.sub(r'([{,])\s*(\w+):', r'\1"\2":', json_str)
+                        # Try parsing again
+                        try:
+                            return json.loads(json_str)
+                        except:
+                            # Fall back to text parsing
+                            pass
             
-            if json_start >= 0 and json_end > json_start:
-                json_str = response_text[json_start:json_end]
-                return json.loads(json_str)
-            else:
-                # First try to parse as a structured text response
-                parsed_result = self.parse_text_grading_response(response_text)
-                if parsed_result:
-                    return parsed_result
-                raise ValueError("No JSON found in the response")
+            # If JSON parsing failed, try to parse as a structured text response
+            parsed_result = self.parse_text_grading_response(response_text)
+            if parsed_result:
+                # Add a warning flag but still return the parsed result
+                parsed_result["_warning"] = "Response was parsed from text format, not JSON"
+                return parsed_result
+                
+            # If all parsing attempts fail, return a detailed error
+            return {
+                "error": True,
+                "error_message": "Failed to parse response as JSON or structured text",
+                "raw_response": response_text[:500]  # First 500 chars only
+            }
                 
         except Exception as e:
             print(f"Error extracting JSON from response: {str(e)}")
             print(f"Response text: {response_text[:100]}...")
             
-            # Try to fix common JSON errors
+            # Try to parse as a structured text response as last resort
             try:
-                # Sometimes the model adds markdown formatting
-                cleaned_text = response_text.replace("```json", "").replace("```", "")
-                return json.loads(cleaned_text)
-            except:
-                # Try to parse as a structured text response
                 parsed_result = self.parse_text_grading_response(response_text)
                 if parsed_result:
+                    parsed_result["_warning"] = "Parsed from text due to JSON error"
                     return parsed_result
-                    
-                # Return error object
-                return {
-                    "error": True,
-                    "error_message": f"Failed to parse JSON: {str(e)}",
-                    "raw_response": response_text[:500]  # First 500 chars only
-                }
+            except:
+                pass
+            
+            # Return error object with the original error
+            return {
+                "error": True,
+                "error_message": f"Failed to parse JSON: {str(e)}",
+                "raw_response": response_text[:500]  # First 500 chars only
+            }
     
     def parse_text_grading_response(self, text_response: str) -> Dict[str, Any]:
         """

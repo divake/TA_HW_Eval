@@ -102,7 +102,17 @@ def analyze_hw_questions(hw_id: str) -> Dict[str, Any]:
     Returns:
         Dictionary with homework structure information
     """
-    # Reuse the lab analysis function, just change cache directory
+    # Create a global dict to cache analysis across runs
+    global _hw_structure_cache
+    if '_hw_structure_cache' not in globals():
+        _hw_structure_cache = {}
+
+    # First check in-memory cache
+    if hw_id in _hw_structure_cache:
+        logger.info(f"Using in-memory cached homework analysis for {hw_id}")
+        return _hw_structure_cache[hw_id]
+        
+    # Check file cache
     cache_dir = os.path.join(config.OUTPUT_DIR, "hw_analysis")
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, f"{hw_id}_analysis.json")
@@ -112,7 +122,10 @@ def analyze_hw_questions(hw_id: str) -> Dict[str, Any]:
         try:
             with open(cache_file, 'r') as f:
                 logger.info(f"Using cached homework analysis for {hw_id}")
-                return json.load(f)
+                hw_structure = json.load(f)
+                # Update in-memory cache
+                _hw_structure_cache[hw_id] = hw_structure
+                return hw_structure
         except Exception as e:
             logger.warning(f"Error reading cached homework analysis for {hw_id}: {str(e)}")
     
@@ -128,6 +141,9 @@ def analyze_hw_questions(hw_id: str) -> Dict[str, Any]:
             "total_questions": 4,  # Default, will be updated by AI analysis
             "max_points": 100      # Default
         }
+        
+        # Save basic structure immediately to prevent multiple API calls
+        _hw_structure_cache[hw_id] = hw_structure
         
         # Try to analyze it with AI
         logger.info(f"Analyzing homework questions for {hw_id} using AI")
@@ -147,7 +163,10 @@ def analyze_hw_questions(hw_id: str) -> Dict[str, Any]:
                 if key not in ai_analysis:
                     ai_analysis[key] = value
             
-            # Cache the analysis
+            # Update both caches
+            _hw_structure_cache[hw_id] = ai_analysis
+            
+            # Cache the analysis to file
             try:
                 with open(cache_file, 'w') as f:
                     json.dump(ai_analysis, f, indent=2)
@@ -162,10 +181,14 @@ def analyze_hw_questions(hw_id: str) -> Dict[str, Any]:
     
     # Use structure from config if available (fallback)
     if hw_id in config.LAB_STRUCTURE:  
-        return config.LAB_STRUCTURE[hw_id]
+        hw_structure = config.LAB_STRUCTURE[hw_id]
+        _hw_structure_cache[hw_id] = hw_structure
+        return hw_structure
     
     # Fall back to generic structure
-    return config.LAB_STRUCTURE["generic"]
+    hw_structure = config.LAB_STRUCTURE["generic"]
+    _hw_structure_cache[hw_id] = hw_structure
+    return hw_structure
 
 def get_hw_questions_content(hw_id: str) -> Dict[str, Any]:
     """
@@ -575,7 +598,8 @@ def get_hw_grading_prompt(hw_id: str, hw_structure: Dict[str, Any]) -> str:
     total_questions = hw_structure.get("total_questions", 4)
     max_points = hw_structure.get("max_points", 100)
     
-    # Create a detailed grading prompt
+    # Create a detailed grading prompt with manually formatted JSON schema
+    # Using hardcoded max_points in the JSON schema to avoid f-string formatting issues
     prompt = f"""You are tasked with grading a student's homework {hw_id} submission. 
 You will be provided with three items:
 1. The homework assignment questions
@@ -589,42 +613,50 @@ Your task is to:
    - Partial marks if the student attempted but gave a wrong or incomplete answer (be moderate to lenient in partial marking)
    - Full marks if the student provided a correct answer or one very close to the reference solution
 
-The homework has {total_questions} questions and a maximum score of {max_points} points.
+The homework has {total_questions} questions and a maximum score of {max_points}
 
 FEEDBACK GUIDELINES - FOLLOW STRICTLY:
 - Provide ONLY technical feedback focusing on specific mathematical errors, incorrect equations, missing steps, or incorrect logic
 - Be extremely concise - use bullet points or short phrases when possible
 - Focus exclusively on the technical content (equations, calculations, theoretical concepts)
-- DO NOT use subjective language like "student has done a good job" or "student needs to improve"
+- DO NOT use any form of "the student" or "student" in your feedback - write directly about the work itself
+- DO NOT include feedback for questions that received full marks - just show the score
 - DO NOT provide generalized feedback like "good understanding of concepts"
 - DO NOT include any non-technical observations
 - Include ONLY the precise technical issue with the specific calculation, equation, or concept
 - Use mathematical notation where appropriate
+- Write in direct, impersonal style (e.g., "Stability proof lacks rigor" not "The student's stability proof lacks rigor")
 
 For each question:
-1. Analyze the student's answer
+1. Analyze the answer
 2. Compare it to the reference solution
 3. Determine a score
-4. Provide specific feedback ONLY if the student did not receive full marks, following the strict technical guidelines above
+4. Provide specific feedback ONLY if the answer did not receive full marks, following the strict technical guidelines above
 
-Format your response as follows:
+IMPORTANT: Return your response as JSON with the following structure:
+{{
+    "problems": [
+        {{
+            "problem_number": 1,
+            "score": X,
+            "max_score": Y,
+            "feedback": "Technical feedback only if not full marks",
+            "justification": "Brief explanation of scoring"
+        }},
+        // Repeat for all questions
+    ],
+    "overall_score": Z,  // Total points earned
+    "overall_max": {max_points},  // Use exactly {max_points} here
+    "overall_feedback": "Brief technical summary of common errors"
+}}
 
-QUESTION 1
-Score: [X/Y]
-Feedback: [Only if not full marks - use concise technical language only]
-Justification: [Brief explanation of scoring]
-
-QUESTION 2
-Score: [X/Y]
-Feedback: [Only if not full marks - use concise technical language only]
-Justification: [Brief explanation of scoring]
-
-...
-
-OVERALL SCORE: [X%] ([X/{max_points} points)
-
-SUMMARY COMMENTS: [Only technical observations about specific patterns of errors]
+DO NOT include any text outside the JSON structure. 
+DO NOT use markdown formatting like ```json or ``` markers.
+Your entire response must be valid, parseable JSON.
 """
+    
+    # Replace the placeholder with the actual value to avoid f-string formatting issues
+    prompt = prompt.replace('"{max_points}"', str(max_points))
     
     return prompt
 

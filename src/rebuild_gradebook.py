@@ -59,12 +59,44 @@ def main():
                         if i < len(all_problems) - 1:
                             feedback_text += ","
                         
-                        # Add specific feedback for this question
+                        # Add specific feedback for this question only if not full marks
                         if score < max_score and feedback:
-                            feedback_text += f" {feedback}"
-                        # If no specific feedback but there's a justification, use that
+                            # Clean up the feedback to remove "the student" references
+                            cleaned_feedback = feedback
+                            cleaned_feedback = cleaned_feedback.replace("The student ", "")
+                            cleaned_feedback = cleaned_feedback.replace("the student ", "")
+                            cleaned_feedback = cleaned_feedback.replace("Student ", "")
+                            
+                            # Replace common phrases with more direct alternatives
+                            cleaned_feedback = cleaned_feedback.replace("correctly determined", "correctly identified")
+                            cleaned_feedback = cleaned_feedback.replace("correctly calculated", "calculated")
+                            cleaned_feedback = cleaned_feedback.replace("correctly computed", "computed")
+                            cleaned_feedback = cleaned_feedback.replace("correctly sketched", "sketched")
+                            cleaned_feedback = cleaned_feedback.replace("correctly derived", "derived")
+                            cleaned_feedback = cleaned_feedback.replace("needs to", "should")
+                            cleaned_feedback = cleaned_feedback.replace("has done", "")
+                            cleaned_feedback = cleaned_feedback.replace("demonstrates", "shows")
+                            
+                            feedback_text += f" {cleaned_feedback}"
+                        # If no specific feedback but there's a justification and not full marks
                         elif justification and not feedback and score < max_score:
-                            feedback_text += f" {justification}"
+                            # Clean up the justification similarly
+                            cleaned_justification = justification
+                            cleaned_justification = cleaned_justification.replace("The student ", "")
+                            cleaned_justification = cleaned_justification.replace("the student ", "")
+                            cleaned_justification = cleaned_justification.replace("Student ", "")
+                            
+                            # Similar replacements for justification text
+                            cleaned_justification = cleaned_justification.replace("correctly determined", "correctly identified")
+                            cleaned_justification = cleaned_justification.replace("correctly calculated", "calculated")
+                            cleaned_justification = cleaned_justification.replace("correctly computed", "computed")
+                            cleaned_justification = cleaned_justification.replace("correctly sketched", "sketched")
+                            cleaned_justification = cleaned_justification.replace("correctly derived", "derived")
+                            cleaned_justification = cleaned_justification.replace("needs to", "should")
+                            cleaned_justification = cleaned_justification.replace("has done", "")
+                            cleaned_justification = cleaned_justification.replace("demonstrates", "shows")
+                            
+                            feedback_text += f" {cleaned_justification}"
                         
                         feedback_parts.append(feedback_text)
                     
