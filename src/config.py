@@ -134,7 +134,14 @@ API_SETTINGS = {
     "max_retries": 5,
     "base_delay": 10,  # seconds
     "timeout": 300,  # seconds
-    "rate_limit_delay": (10, 20)  # min and max seconds for random delay
+    "rate_limit_delay": (10, 20),  # min and max seconds for random delay
+    "anthropic_rate_limit": {
+        "tokens_per_minute": 20000,  # Anthropic's rate limit (20k tokens/minute)
+        "max_backoff": 120,  # Maximum backoff time in seconds
+        "exponential_backoff": True,  # Whether to use exponential backoff
+        "jitter": True,  # Add random jitter to backoff times
+        "token_buffer": 0.9  # Use only 90% of the rate limit to be safe
+    }
 }
 
 # Logging settings

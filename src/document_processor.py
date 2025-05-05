@@ -104,13 +104,13 @@ def get_file_media_type(file_ext: str) -> str:
     Get the media type for a file extension.
     
     Args:
-        file_ext: File extension (e.g., '.pdf', '.jpg')
+        file_ext: File extension (with dot, e.g., '.pdf')
         
     Returns:
         Media type string
     """
-    # Use media types from config
-    return config.FILE_TYPES["media_types"].get(file_ext.lower(), 'application/octet-stream')
+    # Use the media types from config
+    return config.FILE_TYPES["media_types"].get(file_ext.lower(), "application/octet-stream")
 
 def extract_text_from_docx(file_path: str) -> str:
     """
@@ -250,87 +250,304 @@ def process_submission_file(file_path: str, model_type: str) -> Dict[str, Any]:
             "error": f"Error processing file: {str(e)}"
         }
 
-def prepare_submission_for_model(student_files: List[Dict[str, str]], model_type: str) -> Dict[str, Any]:
+def prepare_submission_for_model(submission_files: List[Dict[str, Any]], model_type: str) -> Dict[str, Any]:
     """
-    Prepare all of a student's submitted files for a specific model type.
+    Process submission files for model consumption.
     
     Args:
-        student_files: List of dictionaries with file paths
-        model_type: Target model type
+        submission_files: List of submission file dictionaries
+        model_type: Type of model to use (anthropic, openai)
         
     Returns:
-        Dictionary with processed files
+        Dictionary with processed content
     """
-    all_processed_files = []
-    pdf_files = []
-    non_pdf_files = []
-    has_errors = False
-    error_messages = []
-    
-    # First sort files by type to prioritize PDFs
-    for file_info in student_files:
-        file_path = file_info["path"]
-        file_ext = os.path.splitext(file_path)[1].lower()
-        if file_ext == '.pdf':
-            pdf_files.append(file_info)
-        else:
-            non_pdf_files.append(file_info)
-    
-    # Process PDF files first (since they're most likely to work with Anthropic)
-    for file_info in pdf_files:
-        file_path = file_info["path"]
-        file_name = file_info.get("filename", os.path.basename(file_path))
+    try:
+        content = []
+        total_size = 0
+        size_limit = 20 * 1024 * 1024  # 20MB limit for total submission size
+        compressed_size_limit = 6 * 1024 * 1024  # 6MB limit after compression
         
-        # Process the file
-        processed = process_submission_file(file_path, model_type)
+        for file_info in submission_files:
+            file_path = file_info.get("path")
+            if not os.path.exists(file_path):
+                continue
+                
+            file_ext = os.path.splitext(file_path.lower())[1]
+            file_size = os.path.getsize(file_path)
+            total_size += file_size
+            
+            # Process based on file type
+            if file_ext in config.FILE_TYPES["document_extensions"]:
+                # Document file (PDF, DOC, etc.)
+                try:
+                    is_large_file = file_size > 5 * 1024 * 1024  # 5MB threshold
+                    
+                    # For large PDFs, use compression
+                    if file_ext == '.pdf' and is_large_file:
+                        compressed_path = compress_pdf(file_path)
+                        if compressed_path:
+                            file_path = compressed_path
+                    
+                    # Convert to base64
+                    b64_data = file_to_base64(file_path)
+                    
+                    # If still too large after compression, skip with warning
+                    if len(b64_data) > compressed_size_limit:
+                        print(f"Warning: File {os.path.basename(file_path)} is too large even after compression. Using text extraction instead.")
+                        # Fall back to text extraction
+                        extracted_text = extract_text_from_document(file_path)
+                        content.append({
+                            "type": "text",
+                            "filename": os.path.basename(file_path),
+                            "content": f"EXTRACTED TEXT FROM {os.path.basename(file_path)}:\n\n{extracted_text}"
+                        })
+                    else:
+                        content.append({
+                            "type": "file_base64",
+                            "filename": os.path.basename(file_path),
+                            "content": b64_data,
+                            "media_type": get_file_media_type(file_ext)
+                        })
+                        
+                except Exception as e:
+                    # If document processing fails, try to extract text
+                    print(f"Error processing document {file_path}: {str(e)}. Attempting text extraction.")
+                    try:
+                        extracted_text = extract_text_from_document(file_path)
+                        content.append({
+                            "type": "text",
+                            "filename": os.path.basename(file_path),
+                            "content": f"EXTRACTED TEXT FROM {os.path.basename(file_path)}:\n\n{extracted_text}"
+                        })
+                    except Exception as text_error:
+                        print(f"Failed to extract text from {file_path}: {str(text_error)}")
+            
+            elif file_ext in config.FILE_TYPES["image_extensions"]:
+                # Image file
+                try:
+                    is_large_image = file_size > 1 * 1024 * 1024  # 1MB threshold
+                    
+                    # For large images, compress them
+                    if is_large_image:
+                        compressed_path = compress_image(file_path)
+                        if compressed_path:
+                            file_path = compressed_path
+                    
+                    # Convert to base64
+                    b64_data = file_to_base64(file_path)
+                    
+                    # If still too large, skip
+                    if len(b64_data) > compressed_size_limit:
+                        print(f"Warning: Image {os.path.basename(file_path)} is too large even after compression. Skipping.")
+                        continue
+                        
+                    content.append({
+                        "type": "image_base64",
+                        "filename": os.path.basename(file_path),
+                        "content": b64_data,
+                        "media_type": get_file_media_type(file_ext)
+                    })
+                except Exception as e:
+                    print(f"Error processing image {file_path}: {str(e)}")
+                    
+            elif file_ext == '.txt':
+                # Text file - read contents directly
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        file_text = f.read()
+                        
+                    content.append({
+                        "type": "text",
+                        "filename": os.path.basename(file_path),
+                        "content": file_text
+                    })
+                except Exception as e:
+                    print(f"Error reading text file {file_path}: {str(e)}")
         
-        # Add filename to processed file for better organization
-        processed["filename"] = file_name
-        
-        # Keep track of errors
-        if processed.get("type") == "error":
-            has_errors = True
-            error_messages.append(processed.get("error", "Unknown error"))
-        
-        all_processed_files.append(processed)
-    
-    # Then process non-PDF files
-    for file_info in non_pdf_files:
-        file_path = file_info["path"]
-        file_name = file_info.get("filename", os.path.basename(file_path))
-        
-        # Process the file
-        processed = process_submission_file(file_path, model_type)
-        
-        # Add filename to processed file for better organization
-        processed["filename"] = file_name
-        
-        # Keep track of errors
-        if processed.get("type") == "error":
-            has_errors = True
-            error_messages.append(processed.get("error", "Unknown error"))
-        
-        all_processed_files.append(processed)
-    
-    # If we have no files, return an error
-    if not all_processed_files:
-        return {
-            "type": "error",
-            "error": "No files could be processed"
-        }
-    
-    # If all files had errors, return an error
-    if has_errors and len(error_messages) == len(student_files):
-        return {
-            "type": "error",
-            "error": "; ".join(error_messages)
-        }
-    else:
-        # At least some files were processed successfully
+        # Check if total size is too large and apply more aggressive measures if needed
+        if total_size > size_limit:
+            print(f"Warning: Total submission size ({total_size/1024/1024:.2f}MB) exceeds recommended limit. Using text extraction for all documents.")
+            # Reset content and try with text extraction for all files
+            content = []
+            for file_info in submission_files:
+                file_path = file_info.get("path")
+                if not os.path.exists(file_path):
+                    continue
+                    
+                file_ext = os.path.splitext(file_path.lower())[1]
+                
+                if file_ext in config.FILE_TYPES["document_extensions"]:
+                    try:
+                        extracted_text = extract_text_from_document(file_path)
+                        content.append({
+                            "type": "text",
+                            "filename": os.path.basename(file_path),
+                            "content": f"EXTRACTED TEXT FROM {os.path.basename(file_path)}:\n\n{extracted_text}"
+                        })
+                    except Exception as e:
+                        print(f"Failed to extract text from {file_path}: {str(e)}")
+                elif file_ext == '.txt':
+                    # Text file - read contents directly
+                    try:
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            file_text = f.read()
+                            
+                        content.append({
+                            "type": "text",
+                            "filename": os.path.basename(file_path),
+                            "content": file_text
+                        })
+                    except Exception as e:
+                        print(f"Error reading text file {file_path}: {str(e)}")
+                        
+        # If no content was processed successfully, return error
+        if not content:
+            return {
+                "type": "error",
+                "error": "No files were processed successfully"
+            }
+            
         return {
             "type": "success",
-            "content": all_processed_files
+            "content": content
         }
+        
+    except Exception as e:
+        return {
+            "type": "error",
+            "error": f"Error processing submission: {str(e)}"
+        }
+
+def compress_pdf(pdf_path: str) -> Optional[str]:
+    """
+    Compress a PDF file to reduce its size.
+    
+    Args:
+        pdf_path: Path to the PDF file
+        
+    Returns:
+        Path to the compressed PDF or None if compression failed
+    """
+    try:
+        # Import necessary libraries
+        from PyPDF2 import PdfReader, PdfWriter
+        import tempfile
+        
+        # Create a temporary file to store the compressed PDF
+        fd, compressed_path = tempfile.mkstemp(suffix='.pdf')
+        os.close(fd)
+        
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        
+        # Add each page with compression enabled
+        for page in reader.pages:
+            writer.add_page(page)
+            
+        # Use more aggressive compression
+        writer.add_metadata(reader.metadata)
+        
+        # Write the compressed file with compression enabled
+        with open(compressed_path, 'wb') as output_file:
+            writer.write(output_file)
+            
+        # Return the path to the compressed file
+        return compressed_path
+    except Exception as e:
+        print(f"Error compressing PDF {pdf_path}: {str(e)}")
+        return None
+
+def compress_image(image_path: str) -> Optional[str]:
+    """
+    Compress an image file to reduce its size.
+    
+    Args:
+        image_path: Path to the image file
+        
+    Returns:
+        Path to the compressed image or None if compression failed
+    """
+    try:
+        # Import necessary libraries
+        from PIL import Image
+        import tempfile
+        
+        # Create a temporary file to store the compressed image
+        fd, compressed_path = tempfile.mkstemp(suffix=os.path.splitext(image_path)[1])
+        os.close(fd)
+        
+        # Open the image
+        img = Image.open(image_path)
+        
+        # Resize large images
+        max_size = config.IMAGE_SETTINGS.get("max_size", (800, 800))
+        if img.width > max_size[0] or img.height > max_size[1]:
+            img.thumbnail(max_size, Image.LANCZOS)
+            
+        # Save with compression
+        img.save(
+            compressed_path, 
+            format=config.IMAGE_SETTINGS.get("format", "JPEG"),
+            optimize=True,
+            quality=config.IMAGE_SETTINGS.get("quality", 40)
+        )
+        
+        # Return the path to the compressed file
+        return compressed_path
+    except Exception as e:
+        print(f"Error compressing image {image_path}: {str(e)}")
+        return None
+
+def extract_text_from_document(doc_path: str) -> str:
+    """
+    Extract text from a document file.
+    
+    Args:
+        doc_path: Path to the document file
+        
+    Returns:
+        Extracted text
+    """
+    try:
+        file_ext = os.path.splitext(doc_path.lower())[1]
+        
+        # Handle PDF files
+        if file_ext == '.pdf':
+            try:
+                import pypdf
+                extracted_text = ""
+                
+                with open(doc_path, 'rb') as file:
+                    pdf = pypdf.PdfReader(file)
+                    # Extract text from each page
+                    for page_num in range(len(pdf.pages)):
+                        page = pdf.pages[page_num]
+                        extracted_text += f"--- Page {page_num + 1} ---\n"
+                        extracted_text += page.extract_text() or "[No extractable text on this page]"
+                        extracted_text += "\n\n"
+                        
+                return extracted_text
+            except Exception as e:
+                print(f"Error extracting text from PDF: {str(e)}")
+                return f"[Failed to extract text from PDF: {str(e)}]"
+                
+        # Handle DOCX files
+        elif file_ext == '.docx':
+            try:
+                import docx
+                doc = docx.Document(doc_path)
+                return "\n".join([para.text for para in doc.paragraphs])
+            except Exception as e:
+                print(f"Error extracting text from DOCX: {str(e)}")
+                return f"[Failed to extract text from DOCX: {str(e)}]"
+                
+        # Handle other document types
+        else:
+            return f"[Text extraction not supported for {file_ext} files]"
+            
+    except Exception as e:
+        print(f"Error extracting text from document: {str(e)}")
+        return f"[Text extraction failed: {str(e)}]"
 
 def get_allowed_file_extensions():
     """

@@ -11,6 +11,7 @@ import random
 from typing import Dict, List, Any, Optional
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
 
 # Import from lab codebase
 import sys
@@ -704,7 +705,8 @@ def process_homework(
     max_submissions: Optional[int] = None,
     student_ids: Optional[List[str]] = None,
     parallel: bool = False,
-    prompt_dump: bool = False
+    prompt_dump: bool = False,
+    resume: bool = True
 ) -> List[Dict[str, Any]]:
     """
     Process all submissions for a homework.
@@ -716,6 +718,7 @@ def process_homework(
         student_ids: List of specific student IDs to process
         parallel: Whether to process submissions in parallel
         prompt_dump: Whether to dump the prompt template to a file
+        resume: Whether to resume processing from the last processed submission
         
     Returns:
         List of grading results
@@ -772,7 +775,35 @@ def process_homework(
         logger.info(f"Limiting to {max_submissions} submissions for testing")
         submissions = submissions[:max_submissions]
     
-    all_results = []
+    # If resuming, check which submissions we've already processed
+    completed_submissions = []
+    if resume:
+        # Get list of all submission IDs already processed
+        processed_ids = set()
+        safe_pattern = f"{hw_id}_(.+)_grading.json"
+        for filename in os.listdir(config.OUTPUT_DIR):
+            match = re.match(safe_pattern, filename)
+            if match:
+                processed_id = match.group(1).replace("_", " ")
+                
+                # Check if the file has valid results (no errors)
+                result_path = os.path.join(config.OUTPUT_DIR, filename)
+                try:
+                    with open(result_path, 'r') as f:
+                        result = json.load(f)
+                        if not result.get("error", False):
+                            processed_ids.add(processed_id.lower())
+                            completed_submissions.append(result)
+                except Exception:
+                    # If there's an error reading the file, reprocess the submission
+                    pass
+                    
+        # Filter out already processed submissions with no errors
+        initial_count = len(submissions)
+        submissions = [s for s in submissions if s.get("id", "").lower() not in processed_ids]
+        logger.info(f"Resuming from previous run - {initial_count - len(submissions)} submissions already processed")
+    
+    all_results = completed_submissions.copy()
     
     if parallel:
         # Process in parallel using ThreadPoolExecutor
@@ -791,6 +822,11 @@ def process_homework(
                     all_results.append(result)
                     student_id = submission.get("id", "Unknown")
                     logger.info(f"Completed grading for {student_id}")
+                    
+                    # Create CSV file for gradebook import after each submission
+                    csv_path = create_gradebook_csv(hw_id, all_results)
+                    if csv_path:
+                        logger.info(f"Updated gradebook CSV with {student_id}")
                 except Exception as e:
                     student_id = submission.get("id", "Unknown")
                     logger.error(f"Error processing {student_id}: {str(e)}")
@@ -816,17 +852,36 @@ def process_homework(
                 
                 result = process_student_submission(submission, hw_id, model_type)
                 all_results.append(result)
+                
+                # Create CSV file for gradebook import after each submission
+                csv_path = create_gradebook_csv(hw_id, all_results)
+                if csv_path:
+                    logger.info(f"Updated gradebook CSV with {submission.get('id', 'Unknown')}")
+                    
+                # Save as JSON file to enable resuming if process is interrupted
+                safe_id = submission.get("id", "Unknown").replace(" ", "_")
+                result_path = os.path.join(config.OUTPUT_DIR, f"{hw_id}_{safe_id}_grading.json")
+                with open(result_path, 'w') as f:
+                    json.dump(result, f, indent=2)
+                    
             except Exception as e:
                 student_id = submission.get("id", "Unknown")
                 logger.error(f"Error processing {student_id}: {str(e)}")
-                all_results.append({
+                error_result = {
                     "error": True,
                     "error_message": f"Processing error: {str(e)}",
                     "student_id": student_id,
                     "student_name": submission.get("name", "Unknown")
-                })
+                }
+                all_results.append(error_result)
+                
+                # Also save the error result to enable resuming
+                safe_id = student_id.replace(" ", "_")
+                result_path = os.path.join(config.OUTPUT_DIR, f"{hw_id}_{safe_id}_grading.json")
+                with open(result_path, 'w') as f:
+                    json.dump(error_result, f, indent=2)
     
-    # Create CSV file for gradebook import
+    # Final CSV file creation
     csv_path = create_gradebook_csv(hw_id, all_results)
     if csv_path:
         logger.info(f"Created gradebook CSV at {csv_path}")
@@ -845,6 +900,8 @@ def main():
                         help="Process submissions in parallel")
     parser.add_argument("--dump-prompt", action="store_true",
                         help="Dump the prompt template to a file")
+    parser.add_argument("--no-resume", action="store_true",
+                       help="Don't resume from previous run, process all submissions again")
     
     args = parser.parse_args()
     
@@ -855,7 +912,8 @@ def main():
         max_submissions=args.max,
         student_ids=args.students,
         parallel=args.parallel,
-        prompt_dump=args.dump_prompt
+        prompt_dump=args.dump_prompt,
+        resume=not args.no_resume
     )
     
     # Print summary
