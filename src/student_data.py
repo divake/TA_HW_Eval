@@ -140,7 +140,8 @@ def save_grading_result(student_id: str, lab_id: str, grading_result: Dict[str, 
 
 def create_gradebook_csv(lab_id: str, grading_results: List[Dict[str, Any]]) -> Optional[str]:
     """
-    Create a CSV file formatted for LMS import (Blackboard).
+    Create or append to a CSV file formatted for LMS import (Blackboard).
+    Checks if a gradebook CSV already exists and appends new results while avoiding duplicates.
     
     Args:
         lab_id: Lab identifier
@@ -154,7 +155,7 @@ def create_gradebook_csv(lab_id: str, grading_results: List[Dict[str, Any]]) -> 
         return None
     
     # Create dataframe for gradebook import
-    data = []
+    new_data = []
     
     # Check if this is a homework assignment
     is_homework = lab_id.startswith('hw_')
@@ -266,7 +267,7 @@ def create_gradebook_csv(lab_id: str, grading_results: List[Dict[str, Any]]) -> 
             # Join with line breaks for better readability in LMS
             feedback = "\n".join(feedback_parts)
         
-        data.append({
+        new_data.append({
             "Student Name": result.get("student_name", "Unknown"),
             "Student ID": result.get("student_id", "Unknown"),
             "Submission Date": result.get("date_submitted", "Unknown"),
@@ -274,10 +275,42 @@ def create_gradebook_csv(lab_id: str, grading_results: List[Dict[str, Any]]) -> 
             "Feedback": feedback
         })
     
-    # Create DataFrame and save to CSV
-    df = pd.DataFrame(data)
+    # Check if the gradebook already exists
     csv_path = os.path.join(config.OUTPUT_DIR, f"{lab_id}_gradebook.csv")
+    existing_data = []
+    
+    if os.path.exists(csv_path):
+        print(f"Appending to existing gradebook at {csv_path}")
+        try:
+            # Read existing CSV file
+            existing_df = pd.read_csv(csv_path)
+            existing_data = existing_df.to_dict('records')
+        except Exception as e:
+            print(f"Error reading existing gradebook: {str(e)}. Creating new file.")
+    
+    # Combine existing data with new data, avoiding duplicates
+    combined_data = existing_data.copy()
+    
+    # Create a set of student IDs already in the CSV
+    existing_student_ids = set(entry.get("Student ID", "").lower() for entry in existing_data)
+    
+    # Add new data, replacing existing entries with the same student ID
+    for new_entry in new_data:
+        student_id = new_entry.get("Student ID", "").lower()
+        
+        # If student already exists in the combined data, update their entry
+        if student_id in existing_student_ids:
+            for i, entry in enumerate(combined_data):
+                if entry.get("Student ID", "").lower() == student_id:
+                    combined_data[i] = new_entry
+                    break
+        else:
+            # Otherwise add as a new entry
+            combined_data.append(new_entry)
+    
+    # Create DataFrame and save to CSV
+    df = pd.DataFrame(combined_data)
     df.to_csv(csv_path, index=False)
-    print(f"Created gradebook CSV file at {csv_path}")
+    print(f"Updated gradebook CSV file at {csv_path}")
     
     return csv_path 
